@@ -59,7 +59,7 @@ npm install --global pnpm@12.11.2
 cd ..
 # 仅首次创建；已有 .env 时保留原配置
 test -f .env || cp .env.example .env
-# 在 .env 中设置 ADMIN_USERNAME 和 ADMIN_PASSWORD
+# 管理认证可选；需要时在 .env 中同时设置 ADMIN_USERNAME 和 ADMIN_PASSWORD
 ```
 
 启动、停止和重启：
@@ -81,7 +81,7 @@ test -f .env || cp .env.example .env
 
 已有普通 Compose 后端运行时，脚本会提示先自行停止，避免共用配置和端口；脚本不会自动停止该容器。VPN、代理和服务操作会作用于挂载的 `./config`，开发前按需备份。
 
-访问 <http://127.0.0.1:5173>，使用 `.env` 中的管理账号登录。前端代码修改后热更新；`/api` 和 `/healthz` 由 Vite 自动转发到 `http://127.0.0.1:${WEB_PORT}`，`WEB_PORT` 读取根目录 `.env`，默认 `18080`。代理支持 WebSocket 并保留原始 `Host`，满足后端同源校验。
+访问 <http://127.0.0.1:5173>；`.env` 中的 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD` 同时留空时无需登录，配置了两项时使用该账号登录。认证是可选项，脚本不强制配置；缺少 `.env` 时自动复制默认关闭认证的 `.env.example` 并继续启动。前端代码修改后热更新；`/api` 和 `/healthz` 由 Vite 自动转发到 `http://127.0.0.1:${WEB_PORT}`，`WEB_PORT` 读取根目录 `.env`，默认 `18080`。代理支持 WebSocket 并保留原始 `Host`，满足后端同源校验。
 
 ### 更新 Rust 代码
 
@@ -99,7 +99,7 @@ test -f .env || cp .env.example .env
 
 ### Supervisor 网络管理
 
-仅开发镜像启用 Supervisor HTTP / XML-RPC，宿主机固定绑定 `127.0.0.1`，默认地址为 <http://127.0.0.1:19001>，端口可在 `.env` 中通过 `SUPERVISOR_PORT` 调整。使用同一组 `ADMIN_USERNAME`、`ADMIN_PASSWORD` 登录，可在网页直接查看、停止或重启进程；也可用支持 XML-RPC 的客户端连接 `/RPC2`。开发镜像设置 `VPNWEB_DEV=1`，防火墙据此允许容器端口 `9001` 的入站管理连接及回包，保持隧道外主动出站默认拒绝。生产镜像不设置该标记，仅保留原有 Unix socket。
+仅开发镜像启用 Supervisor HTTP / XML-RPC，宿主机固定绑定 `127.0.0.1`，默认地址为 <http://127.0.0.1:19001>，端口可在 `.env` 中通过 `SUPERVISOR_PORT` 调整。认证与后端使用同一组 `ADMIN_USERNAME`、`ADMIN_PASSWORD`，两项同时留空时可直接访问；可在网页直接查看、停止或重启进程，也可用支持 XML-RPC 的客户端连接 `/RPC2`。开发镜像设置 `VPNWEB_DEV=1`，防火墙据此允许容器端口 `9001` 的入站管理连接及回包，保持隧道外主动出站默认拒绝。生产镜像不设置该标记，仅保留原有 Unix socket。
 
 手动重启进程不会编译 Rust；Rust 更新统一使用 `./scripts/dev.sh build`，确保新产物已经发布。
 

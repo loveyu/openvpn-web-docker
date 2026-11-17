@@ -26,7 +26,7 @@
 
 Rust 工具链以 `rust-toolchain.toml` 为准，Node 版本以 `frontend/.node-version` 为准，pnpm 版本以 `frontend/package.json` 的 `packageManager` 为准。使用 pnpm 管理前端依赖，保留并按需更新 `Cargo.lock` 和 `frontend/pnpm-lock.yaml`。
 
-推荐本机运行 Vite、容器运行后端和 VPN 服务，具体步骤见 [开发与验证](docs/development.md)。首次启动时复制 `.env.example` 为 `.env`，已有文件则保留原配置，设置 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD` 后启动。以下命令在仓库根目录执行：
+推荐本机运行 Vite、容器运行后端和 VPN 服务，具体步骤见 [开发与验证](docs/development.md)。首次启动时复制 `.env.example` 为 `.env`，已有文件则保留原配置。管理认证可选，`ADMIN_USERNAME` 和 `ADMIN_PASSWORD` 同时留空即可启动；需要认证时同时设置两项。以下命令在仓库根目录执行：
 
 ```bash
 ./scripts/dev.sh start
@@ -40,7 +40,7 @@ Rust 工具链以 `rust-toolchain.toml` 为准，Node 版本以 `frontend/.node-
 
 修改 Rust 代码后执行 `./scripts/dev.sh build`：脚本在匹配运行环境的 Rust 容器中增量构建，成功后原子替换目录挂载的 `target/dev-dist/openvpn-web`，自动重启 Supervisor 的 `backend`、`health` 和当时已运行的 `socks5`；构建失败保留当前版本，无需 `docker cp`。不重跑一次性 bootstrap，不开启已停止的可选服务。涉及启动、防火墙初始化、Docker 或 `.env` 配置的变更执行 `./scripts/dev.sh restart`。
 
-开发 Supervisor 提供 HTTP / XML-RPC 管理，默认 `http://127.0.0.1:19001`，使用 `.env` 的管理账号，支持网页直接重启进程；`SUPERVISOR_PORT` 调整宿主端口。此网络管理入口仅开发镜像启用，生产仍使用 Unix socket。
+开发 Supervisor 提供 HTTP / XML-RPC 管理，默认 `http://127.0.0.1:19001`，按 `.env` 的管理账号启用可选认证，两项同时留空时可直接访问，支持网页直接重启进程；`SUPERVISOR_PORT` 调整宿主端口。此网络管理入口仅开发镜像启用，生产仍使用 Unix socket。
 
 按变更范围执行现有检查，与 [GitHub CI](.github/workflows/docker.yml) 保持一致：
 
@@ -76,7 +76,7 @@ smoke 脚本需要 Linux Docker Engine、`/dev/net/tun`、内核 nftables 支持
 - 保持服务启动前安装默认拒绝的 nftables 策略、失败即退出的行为。VPN 断线后，代理和 SSH 的新出站连接不能回退到 Docker 默认网关；隧道外 IPv6 同样默认拒绝。隧道外例外规则详见 [DNS 与网络](docs/networking.md)。
 - 容器端口固定为 Web `80`、HTTP `8888`、SOCKS5 `1080`、SSH `22`。开发镜像额外启用 Supervisor `9001`，仅映射宿主机回环地址。宿主机映射通过部署配置调整，并同步对应的 `PUBLISHED_*` 展示值，不重新引入各 profile 的监听端口配置。
 - 同一时间只运行一套 VPN 配置。切换 profile 时保持旧 SSH 会话终止、服务切换和账户隔离；“保存配置”与应用或重启服务的语义保持一致。
-- 管理认证由 `ADMIN_USERNAME`、`ADMIN_PASSWORD` 环境变量配置；保持写请求和 WebSocket 的同源校验。`/healthz` 不要求认证，不应返回配置或密钥。
+- 管理认证可选，由 `ADMIN_USERNAME`、`ADMIN_PASSWORD` 环境变量配置，两项同时留空时关闭认证。文档示例中的账号配置不构成启动前置条件，不在开发脚本中强制启用。保持写请求和 WebSocket 的同源校验。`/healthz` 不要求认证，不应返回配置或密钥。
 - `/config` 保存真实配置、密钥、日志及 SSH 数据，`/run/vpnweb` 保存运行时文件。保持配置和密钥文件 `0600`、密钥目录 `0700` 及现有账户隔离规则；存储结构见 [存储与权限](docs/storage.md)。
 - 不提交 `.env`、真实 VPN 配置、证书、私钥、密码、日志或 `config/` 数据。操作已有开发容器前注意其挂载的真实配置，避免覆盖或清理用户数据。
 

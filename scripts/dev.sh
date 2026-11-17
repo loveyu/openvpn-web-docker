@@ -83,17 +83,9 @@ start() {
     check_docker
     if [[ ! -f .env ]]; then
         cp .env.example .env
-        echo "已创建 .env，请设置 ADMIN_USERNAME 和 ADMIN_PASSWORD 后重新执行。" >&2
-        exit 1
+        echo "已创建 .env。"
     fi
-    compose config --format json | node -e '
-        const config = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
-        const env = config.services["openvpn-web"].environment;
-        if (!env.ADMIN_USERNAME || !env.ADMIN_PASSWORD) {
-            console.error("请先在 .env 中设置 ADMIN_USERNAME 和 ADMIN_PASSWORD。");
-            process.exit(1);
-        }
-    '
+    compose config --quiet
     if [[ -n "$(compose ps --status running --quiet openvpn-web)" ]]; then
         echo "已有 Compose 后端在运行；请先自行停止，避免端口冲突和共用配置。" >&2
         exit 1

@@ -17,7 +17,7 @@ macOS 先启动 Docker Desktop，后续 Compose 和 Docker Run 命令与 Linux �
 使用独立
 **bridge 网络，不支持 host 模式或共享其他容器的网络命名空间**；防火墙与路由只作用于本容器。
 
-以下两种启动方式都需要先设置管理用户名和密码；示例中的密码请替换为自己的强密码。
+以下两种启动方式的示例默认配置管理用户名和密码，示例中的密码请替换为自己的强密码。管理认证可选，无需认证时将 `ADMIN_USERNAME`、`ADMIN_PASSWORD` 同时留空，或在 Docker Run 中省略这两个环境变量。
 
 ## Docker Compose（推荐）
 
@@ -84,7 +84,7 @@ docker run -d --name openvpn-web --restart unless-stopped \
 
 示例默认绑定宿主机 `127.0.0.1`。局域网访问时，Compose 设置 `.env` 的 `BIND_ADDRESS`，Docker Run 修改
 `-p` 的绑定地址。管理 Basic Auth 通过 `ADMIN_USERNAME`、`ADMIN_PASSWORD`
-环境变量设置，两项必须同时提供，修改后重新创建容器。浏览器使用原生认证对话框，API 使用
+环境变量设置，两项同时留空时关闭认证，启用时两项同时提供，修改后重新创建容器。启用认证后浏览器使用原生认证对话框，API 使用
 `curl -u '用户名:密码'`；点击页面中的 Basic Auth 可查看设置说明。`/healthz`
 供容器健康检查使用，不要求认证，不包含配置或密钥。
 

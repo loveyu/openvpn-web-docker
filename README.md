@@ -13,7 +13,7 @@
 test -f .env || cp .env.example .env
 ```
 
-编辑 `.env`，设置管理用户名和强密码：
+示例默认配置管理用户名和强密码；无需认证时，将两项同时留空：
 
 ```dotenv
 ADMIN_USERNAME=admin
@@ -26,7 +26,7 @@ ADMIN_PASSWORD='请替换为强密码'
 docker compose up -d --build
 ```
 
-访问 <http://127.0.0.1:18080>，使用上述凭据登录，在 OpenVPN 页面导入
+访问 <http://127.0.0.1:18080>，启用认证时使用上述凭据登录，在 OpenVPN 页面导入
 `client.ovpn`、填写证书和凭据并连接。默认手动 DNS 为
 `1.1.1.1`，请按 VPN 网络要求调整，或选择使用 OpenVPN 下发 DNS。
 
