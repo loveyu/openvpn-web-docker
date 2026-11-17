@@ -36,7 +36,7 @@ COPY --from=socks-builder /usr/local/sbin/sockd /usr/sbin/danted
 RUN apt-get update && apt-get install -y --no-install-recommends iputils-ping procps mtr-tiny traceroute \
     && rm -rf /var/lib/apt/lists/*
 
-FROM node:26.13.1-trixie-slim AS frontend
+FROM --platform=$BUILDPLATFORM node:26.13.1-trixie-slim AS frontend
 WORKDIR /build/frontend
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
 RUN npm install --global --no-update-notifier --allow-scripts=pnpm pnpm@12.11.2
@@ -45,18 +45,23 @@ RUN --mount=type=cache,id=vpnweb-pnpm,target=/pnpm/store \
 COPY frontend/ ./
 RUN pnpm build
 
+# CI 用同名构建上下文传入一次构建的 dist；本地继续在镜像内构建前端。
+FROM scratch AS frontend-assets
+COPY --from=frontend /build/frontend/dist/ /
+
 FROM rust:1.100.0-slim-trixie AS backend
+ARG TARGETARCH
 WORKDIR /build
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY src/ src/
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/build/target \
+    --mount=type=cache,id=vpnweb-target-${TARGETARCH},target=/build/target \
     cargo build --release --locked && cp target/release/openvpn-web /usr/local/bin/openvpn-web
 
 FROM runtime
 COPY --from=backend /usr/local/bin/openvpn-web /usr/local/bin/openvpn-web
-COPY --from=frontend /build/frontend/dist/ /app/frontend/
+COPY --from=frontend-assets / /app/frontend/
 COPY docker/http-run.sh /usr/local/lib/vpnweb/http-run.sh
 COPY docker/supervisord.conf /etc/supervisor/supervisord.conf
 COPY --chmod=755 docker/entrypoint.sh /usr/local/bin/vpnweb-entrypoint

@@ -24,11 +24,26 @@
 
 [GitHub 工作流](../.github/workflows/docker.yml) 在 PR、main、`v*` 标签、手动和每周触发：
 
-1. Rust、TypeScript、Python、Shell、YAML、TOML、Dockerfile 和 Compose 的零 warning 质量检查。
-2. AMD64 与 ARM64 原生 runner 分别构建完整镜像，执行隔离 Docker 集成测试。
-3. 非 PR 运行在测试通过后发布 GHCR 多架构 manifest（latest、版本、提交 SHA）。
+1. Rust、TypeScript、Python、Shell、YAML、TOML、Dockerfile 和 Compose 的零 warning 质量检查；前端在此生成一次 dist，作为 artifact 供后续镜像构建复用。
+2. AMD64 与 ARM64 原生 runner 分别构建完整镜像，执行隔离 Docker 集成测试；两者通过 `frontend-assets` 命名构建上下文使用同一份 dist，不重复安装或编译前端。
+3. 非 PR 运行在测试通过后发布 GHCR 多架构 manifest（latest、版本、提交 SHA），并检查包含 `linux/amd64` 与 `linux/arm64`。
+
+这两种 Linux 镜像覆盖 Linux 主机及使用 Docker Desktop 的 Intel / Apple Silicon Mac。CI 在 Linux 原生 runner 上验证容器行为；macOS Docker Desktop 仍需在对应环境实机验证。
 
 仓库需允许 Actions 写入 Packages；镜像公开性由 GHCR 仓库设置控制。已发布镜像的使用方式见[部署与启动](deployment.md#使用-ghcr-镜像)。本地不自动推送或发布。
+
+CI 缓存 Rust 检查所需的 Cargo 依赖与编译产物、pnpm 依赖，以及按 AMD64 / ARM64 分开的 BuildKit 镜像层（`type=gha,mode=max`）。运行时系统包仍通过 `no-cache-filters: runtime` 刷新；前端 dist 在同一次工作流内通过 artifact 共享。
+
+## 本地镜像构建
+
+本地只构建当前 Docker 引擎的平台和架构，使用以下任一命令即可，无需指定 `--platform`：
+
+```bash
+docker build -t openvpn-web:local .
+docker compose up -d --build
+```
+
+Apple Silicon 的 Docker Desktop 默认构建 `linux/arm64`，Intel Mac 和 x86-64 Linux 默认构建 `linux/amd64`。本地前端静态资源在 Docker 内使用构建机架构生成，Rust 后端和 Dante 按目标架构编译，Rust 编译产物缓存按架构隔离。多架构构建、集成测试与发布由 GitHub CI 完成，本地无需配置 QEMU 或构建其他架构。
 
 ## 本地前端 + 容器后端
 

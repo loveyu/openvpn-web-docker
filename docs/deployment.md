@@ -2,7 +2,19 @@
 
 [返回项目首页](../README.md) · 本文命令默认在仓库根目录执行。
 
-需要 Linux Docker Engine、`/dev/net/tun` 和内核 nftables 支持；采用 Docker Compose 时还需 Compose 插件。使用独立
+镜像提供 `linux/amd64` 和 `linux/arm64`，Docker 会按引擎架构自动选择：
+
+| 宿主机              | Docker 环境                  | 镜像平台      |
+| ------------------- | ---------------------------- | ------------- |
+| Linux x86-64        | Docker Engine                | `linux/amd64` |
+| Linux ARM64         | Docker Engine                | `linux/arm64` |
+| macOS Intel         | Docker Desktop（Linux 容器） | `linux/amd64` |
+| macOS Apple Silicon | Docker Desktop（Linux 容器） | `linux/arm64` |
+
+需要 Docker 引擎所在 Linux 环境提供 `/dev/net/tun` 和内核 nftables 支持；采用 Docker Compose 时还需 Compose 插件。
+macOS 先启动 Docker Desktop，后续 Compose 和 Docker Run 命令与 Linux 相同。`--device /dev/net/tun` 映射的是 Docker Desktop Linux 虚拟机中的设备，macOS 宿主机无需创建该设备，也无需把 `platform` 固定为 `linux/amd64`。
+
+使用独立
 **bridge 网络，不支持 host 模式或共享其他容器的网络命名空间**；防火墙与路由只作用于本容器。
 
 以下两种启动方式都需要先设置管理用户名和密码；示例中的密码请替换为自己的强密码。
@@ -99,5 +111,11 @@ docker run -d --name openvpn-web --restart unless-stopped \
 
 首次成功发布后可在 `.env` 设置 `IMAGE=ghcr.io/<owner>/<repo>:latest`，执行 `docker compose pull` 和
 `docker compose up -d --no-build`。
+
+同一标签同时包含 AMD64 和 ARM64 镜像，适用于上述 Linux 和 macOS 环境，无需选择架构专用标签。可检查镜像支持的平台：
+
+```bash
+docker buildx imagetools inspect ghcr.io/<owner>/<repo>:latest
+```
 
 镜像构建、发布触发条件与仓库权限见[开发与验证](development.md#github-ci)。

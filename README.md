@@ -4,8 +4,8 @@
 
 ## 快速开始
 
-需要 Linux Docker Engine、Docker Compose 插件、`/dev/net/tun`
-和内核 nftables 支持。使用独立 bridge 网络，不支持 host 模式或共享其他容器的网络命名空间。
+支持 Linux（AMD64 / ARM64）及 macOS（Intel / Apple Silicon，使用 Docker Desktop 的 Linux 容器）。
+需要 Docker Compose、Docker 引擎所在 Linux 环境的 `/dev/net/tun` 和 nftables 支持；macOS 的设备由 Docker Desktop 虚拟机提供。使用独立 bridge 网络，不支持 host 模式或共享其他容器的网络命名空间。
 
 在仓库根目录创建环境变量文件，已有 `.env` 时保留原配置：
 
