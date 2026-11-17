@@ -156,6 +156,7 @@ fn summarize(mut live: Value, cached: &Value, config: &Active, now: u64) -> Valu
             return live;
         }
         live["probe"] = cached["probe"].clone();
+        live["ok"] = cached["ok"].clone();
         live["healthy"] = json!(cached["healthy"] == true);
         if live["healthy"] != true {
             live["state"] = json!("unhealthy");
@@ -163,7 +164,8 @@ fn summarize(mut live: Value, cached: &Value, config: &Active, now: u64) -> Valu
         }
     } else {
         live["healthy"] = json!(live["ok"] == true);
-        if current
+        if live["ok"] != true
+            && current
             && cached["consecutive_failures"].as_u64().unwrap_or(0)
                 >= u64::from(config.settings.health.failure_threshold)
         {
@@ -192,6 +194,9 @@ pub(super) async fn vpn_status(rt: &Runtime) -> Result<Value> {
 pub(super) async fn check(rt: &Runtime) -> Result<Value> {
     let config = rt.saved()?;
     let mut result = observe(rt, &config, true).await?;
+    if !idle(&result) {
+        result["healthy"] = json!(result["ok"] == true);
+    }
     result.as_object_mut().unwrap().remove("identity");
     // 手动测试不写周期结果，不改变计数，也不执行恢复动作。
     Ok(result)
@@ -346,7 +351,7 @@ mod tests {
     fn stale_or_changed_probe_results_are_not_healthy() {
         let mut config = profile();
         config.settings.health.enabled = true;
-        let cached = json!({"identity":identity(&config),"checked_at":100,"healthy":true,
+        let cached = json!({"identity":identity(&config),"checked_at":100,"ok":true,"healthy":true,
             "connection_since":100,"connection_ip":"192.0.2.1","probe":{"ok":true},"consecutive_failures":0});
         assert_eq!(
             summarize(connected(), &cached, &config, 110)["healthy"],
@@ -378,6 +383,16 @@ mod tests {
             assert_eq!(result["healthy"], Value::Null);
             assert_eq!(result["consecutive_failures"], 0);
         }
+    }
+
+    #[test]
+    fn a_restored_tunnel_overrides_previous_connection_failures() {
+        let config = profile();
+        let cached = json!({"identity":identity(&config),"checked_at":100,"healthy":false,
+            "connection_since":100,"connection_ip":"192.0.2.1","consecutive_failures":3});
+        let result = summarize(connected(), &cached, &config, 110);
+        assert_eq!(result["state"], "healthy");
+        assert_eq!(result["healthy"], true);
     }
 
     #[test]
