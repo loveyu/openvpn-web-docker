@@ -292,55 +292,33 @@ fn invalid_tool_input(error: impl std::fmt::Display) -> ApiError {
     ApiError(StatusCode::BAD_REQUEST, error.to_string())
 }
 
-async fn tool_vpn(app: &App) -> ApiResult<config::Vpn> {
-    let document = load_config(app).await?;
-    document
-        .profiles
-        .into_iter()
-        .find(|profile| profile.id == document.active_profile)
-        .map(|profile| profile.settings.vpn)
-        .ok_or_else(|| ApiError(StatusCode::CONFLICT, "请选择有效的 VPN 配置".into()))
-}
-
 async fn test_ping(
-    State(app): State<Arc<App>>,
     Query(input): Query<PingInput>,
     websocket: WebSocketUpgrade,
 ) -> ApiResult<Response> {
     let host = network::domain(&input.host).map_err(invalid_tool_input)?;
-    let vpn = tool_vpn(&app).await?;
     Ok(websocket
         .on_upgrade(move |socket| {
-            tools::path_trace::run(socket, vpn, tools::path_trace::Tool::Ping, host)
+            tools::path_trace::run(socket, tools::path_trace::Tool::Ping, host)
         })
         .into_response())
 }
 
-async fn test_tcping(
-    State(app): State<Arc<App>>,
-    Json(input): Json<TcpPingInput>,
-) -> ApiResult<Json<Value>> {
+async fn test_tcping(Json(input): Json<TcpPingInput>) -> ApiResult<Json<Value>> {
     let host = network::domain(&input.host).map_err(invalid_tool_input)?;
     if input.port == 0 {
         return Err(invalid_tool_input("TCP 端口必须为 1–65535"));
     }
-    Ok(Json(
-        tools::tcping(&tool_vpn(&app).await?, &host, input.port).await,
-    ))
+    Ok(Json(tools::tcping(&host, input.port).await))
 }
 
-async fn test_curl(
-    State(app): State<Arc<App>>,
-    Json(input): Json<CurlInput>,
-) -> ApiResult<Json<Value>> {
+async fn test_curl(Json(input): Json<CurlInput>) -> ApiResult<Json<Value>> {
     if !matches!(input.method.as_str(), "GET" | "HEAD") {
         return Err(invalid_tool_input("CURL 仅支持 GET 和 HEAD"));
     }
     let (host, _) = network::http_target(&input.url).map_err(invalid_tool_input)?;
     network::domain(&host).map_err(invalid_tool_input)?;
-    Ok(Json(
-        tools::curl(&tool_vpn(&app).await?, &input.url, &input.method).await,
-    ))
+    Ok(Json(tools::curl(&input.url, &input.method).await))
 }
 
 #[derive(Deserialize)]
@@ -350,14 +328,12 @@ struct TraceInput {
 }
 
 async fn trace_path(
-    State(app): State<Arc<App>>,
     Query(input): Query<TraceInput>,
     websocket: WebSocketUpgrade,
 ) -> ApiResult<Response> {
     let host = network::domain(&input.host).map_err(invalid_tool_input)?;
-    let vpn = tool_vpn(&app).await?;
     Ok(websocket
-        .on_upgrade(move |socket| tools::path_trace::run(socket, vpn, input.tool, host))
+        .on_upgrade(move |socket| tools::path_trace::run(socket, input.tool, host))
         .into_response())
 }
 

@@ -16,6 +16,7 @@ export interface Config {
     }[];
     selected_endpoint: string;
     selection_mode: "auto" | "manual";
+    route_mode: "all" | "config";
     username: string;
     password: string;
     ca: string;
@@ -69,6 +70,7 @@ export interface DnsResult {
   ip: string;
   url?: string;
   protocol?: string;
+  record_type?: "A" | "AAAA";
   ok: boolean;
   answers: string[];
   latency_ms: number;
@@ -76,6 +78,7 @@ export interface DnsResult {
 }
 export interface DnsResults {
   domain: string;
+  default_dns: DnsResult[];
   httpdns: DnsResult[];
   vpn_dns: DnsResult[];
 }

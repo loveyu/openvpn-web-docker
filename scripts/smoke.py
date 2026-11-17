@@ -80,14 +80,15 @@ def main(image):
         except urllib.error.HTTPError as error:
             return error.code
 
-    def ping_snapshots():
+    def path_snapshots(tool, host):
         port = host_port(80)
+        path = f"ping?host={host}" if tool == "ping" else f"trace?tool={tool}&host={host}"
         with (
             socket.create_connection(("127.0.0.1", int(port)), timeout=5) as connection,
             connection.makefile("rb") as incoming,
         ):
             request = (
-                f"GET /api/tools/ping?host=10.77.0.1 HTTP/1.1\r\n"
+                f"GET /api/tools/{path} HTTP/1.1\r\n"
                 f"Host: 127.0.0.1:{port}\r\n"
                 f"Origin: http://127.0.0.1:{port}\r\n"
                 f"Authorization: {authorization}\r\n"
@@ -96,17 +97,17 @@ def main(image):
                 f"Sec-WebSocket-Key: {base64.b64encode(secrets.token_bytes(16)).decode()}\r\n\r\n"
             )
             connection.sendall(request.encode())
-            assert incoming.readline().split()[1] == b"101", "Ping WebSocket 升级失败"
+            assert incoming.readline().split()[1] == b"101", f"{tool} WebSocket 升级失败"
             while incoming.readline().strip():
                 pass
             while True:
                 header = incoming.read(2)
-                assert len(header) == 2, "Ping 未发送完成状态就断开连接"
+                assert len(header) == 2, f"{tool} 未发送完成状态就断开连接"
                 length = header[1] & 127
                 if length in (126, 127):
                     length = int.from_bytes(incoming.read(2 if length == 126 else 8), "big")
                 payload = incoming.read(length)
-                assert header[0] == 0x81, "Ping 应发送完整的文本帧"
+                assert header[0] == 0x81, f"{tool} 应发送完整的文本帧"
                 snapshot = json.loads(payload)
                 yield snapshot
                 if snapshot["done"]:
@@ -252,7 +253,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
         name = query.get("name", [""])[0]
-        body = json.dumps({"Status": 0, "Answer": [{"type": 1, "data": address if name == "vpn.test" else "10.77.0.1"}]}).encode() if name else b"vpnweb-test-ok"
+        kind = 28 if query.get("type", ["A"])[0] == "AAAA" else 1
+        records = [] if name == "ipv4-only.test" and kind == 28 else [{"type": kind, "data": "2001:db8::1" if kind == 28 else address if name == "vpn.test" else "192.0.2.1" if name in ["split.test", "dns-failure.test"] else "10.77.0.1"}]
+        body = json.dumps({"Status": 0, "Answer": records}).encode() if name else b"vpnweb-test-ok"
         image = self.path == "/image.png"
         if image:
             def chunk(kind, data):
@@ -270,10 +273,18 @@ def dns():
     while True:
         data, peer = sock.recvfrom(4096)
         position = 12
-        while data[position]: position += data[position] + 1
+        labels = []
+        while data[position]:
+            labels.append(data[position + 1:position + 1 + data[position]])
+            position += data[position] + 1
+        name = b".".join(labels).decode()
+        kind = struct.unpack("!H", data[position + 1:position + 3])[0]
         end = position + 5
-        answer = data[:2]+struct.pack("!HHHHH", 0x8180, 1, 1, 0, 0)+data[12:end]
-        answer += b"\\xc0\\x0c"+struct.pack("!HHIH", 1, 1, 30, 4)+socket.inet_aton("10.77.0.1")
+        present = name != "dns-failure.test" and not (name == "ipv4-only.test" and kind == 28)
+        answer = data[:2]+struct.pack("!HHHHH", 0x8180, 1, int(present), 0, 0)+data[12:end]
+        if present:
+            record = socket.inet_pton(socket.AF_INET6, "2001:db8::1") if kind == 28 else socket.inet_aton("10.77.0.1")
+            answer += b"\\xc0\\x0c"+struct.pack("!HHIH", kind, 1, 30, len(record))+record
         sock.sendto(answer, peer)
 threading.Thread(target=dns, daemon=True).start()
 threading.Thread(target=http.server.ThreadingHTTPServer(("0.0.0.0", 18081), Handler).serve_forever, daemon=True).start()
@@ -366,7 +377,7 @@ http.server.ThreadingHTTPServer(("0.0.0.0", 18080), Handler).serve_forever()
             endpoint = str(uuid.uuid4())
             settings["vpn"].update(
                 {
-                    "config": 'client\ndev tun\nremote-cert-tls server\nresolv-retry infinite\npull-filter ignore "dhcp-option DNS "\n',
+                    "config": 'client\ndev tun\nremote-cert-tls server\nresolv-retry infinite\npull-filter ignore "dhcp-option DNS "\nroute-nopull\nroute 192.0.2.0 255.255.255.0 net_gateway\npull-filter ignore "route "\n',
                     "endpoints": [
                         {
                             "id": str(uuid.uuid4()),
@@ -406,6 +417,33 @@ http.server.ThreadingHTTPServer(("0.0.0.0", 18080), Handler).serve_forever()
             assert len([item for item in state["endpoint_probes"] if item["ok"]]) == 1
             assert state["dns"]["pushed"] == ["10.77.0.1"]
             assert any(route.get("dev") == "tun0" for route in state["routes"])
+            assert any(
+                route.get("dst") == "0.0.0.0/1" and route.get("dev") == "tun0"
+                for route in state["routes"]
+            )
+            assert not any(route.get("dst") == "192.0.2.0/24" for route in state["routes"])
+
+            settings["vpn"]["route_mode"] = "config"
+            api("/config", "PUT", document)
+            api("/apply", "POST")
+            configured_routes = wait(
+                lambda: state if (state := api("/status"))["vpn"]["state"] == "CONNECTED" else None
+            )["routes"]
+            assert any(
+                route.get("dst") == "192.0.2.0/24" and route.get("dev") == "eth0"
+                for route in configured_routes
+            )
+            assert not any(route.get("dst") == "0.0.0.0/1" for route in configured_routes)
+            assert api("/config")["profiles"][0]["settings"]["vpn"]["route_mode"] == "config"
+            verify_blocked(address)
+
+            settings["vpn"]["route_mode"] = "all"
+            api("/config", "PUT", document)
+            api("/apply", "POST")
+            state = wait(
+                lambda: state if (state := api("/status"))["vpn"]["state"] == "CONNECTED" else None
+            )
+            print("✓ 全部路由覆盖原文限制、按配置保留路由、模式持久化与隧道外出口保护", flush=True)
             wait(lambda: proxy(1080, "socks5h"))
             proxy(8888, "http")
             assert not settings["sshd"]["allow_login"]
@@ -465,6 +503,15 @@ http.server.ThreadingHTTPServer(("0.0.0.0", 18080), Handler).serve_forever()
             )
 
             pid = next(item["pid"] for item in state["services"] if item["name"] == "openvpn")
+            # 保存未应用的手动配置后，测试仍应只包含当前生效的下发 DNS。
+            settings["vpn"].update({"dns_mode": "manual", "dns": ["127.0.0.1"]})
+            api("/config", "PUT", document)
+            results = api("/tools/dns", "POST", {"domain": "target.test"})
+            assert {item["ip"] for item in results["vpn_dns"]} == {"10.77.0.1"}
+            # 应用手动模式后，已停用的下发 DNS 不应继续参与测试。
+            api("/dns", "POST")
+            results = api("/tools/dns", "POST", {"domain": "target.test"})
+            assert {item["ip"] for item in results["vpn_dns"]} == {"127.0.0.1"}
             settings["vpn"].update({"dns_mode": "manual", "dns": ["10.77.0.1"]})
             api("/config", "PUT", document)
             api("/dns", "POST")
@@ -474,8 +521,26 @@ http.server.ThreadingHTTPServer(("0.0.0.0", 18080), Handler).serve_forever()
                 next(item["pid"] for item in state["services"] if item["name"] == "openvpn") == pid
             )
             results = api("/tools/dns", "POST", {"domain": "target.test"})
-            assert any(item["ok"] and item["ip"] == address for item in results["httpdns"])
-            assert any(item["ok"] for item in results["vpn_dns"])
+            assert all(item["ip"] == "10.77.0.1" for item in results["default_dns"])
+            for rows in [
+                results["default_dns"],
+                results["vpn_dns"],
+                [item for item in results["httpdns"] if item["ip"] == address],
+            ]:
+                by_type = {item["record_type"]: item for item in rows}
+                assert set(by_type) == {"A", "AAAA"}
+                for kind, answer in [("A", "10.77.0.1"), ("AAAA", "2001:db8::1")]:
+                    assert by_type[kind]["ok"] and by_type[kind]["answers"] == [answer]
+            results = api("/tools/dns", "POST", {"domain": "ipv4-only.test"})
+            for item in [
+                *results["default_dns"],
+                *results["vpn_dns"],
+                *(item for item in results["httpdns"] if item["ip"] == address),
+            ]:
+                if item["record_type"] == "AAAA":
+                    assert not item["ok"] and not item["answers"] and "AAAA" in item["error"]
+                else:
+                    assert item["ok"] and item["answers"] == ["10.77.0.1"]
             for kind in ["ping", "tcp", "http"]:
                 settings["health"].update(
                     {
@@ -512,17 +577,28 @@ http.server.ThreadingHTTPServer(("0.0.0.0", 18080), Handler).serve_forever()
                 "✓ DNS 热更新不重启 VPN、全部 DNS 工具、Ping/TCP/HTTP 与 HEAD 健康检查", flush=True
             )
 
-            snapshots = list(ping_snapshots())
+            # 默认 DNS 返回隧道地址，HTTPDNS 刻意返回不同地址，验证工具的解析来源。
+            snapshots = list(path_snapshots("ping", "split.test"))
+            assert snapshots[-1]["ip"] == "10.77.0.1", "Ping 未使用默认 DNS"
             assert any(
                 not snapshot["done"] and "time=" in snapshot["stdout"] for snapshot in snapshots
             ), "Ping 未实时推送 ICMP 回包"
             assert snapshots[-1]["timed_out"] and 59000 <= snapshots[-1]["elapsed_ms"] < 65000, (
                 "Ping 未按 60 秒上限停止"
             )
-            assert api("/tools/tcping", "POST", {"host": "target.test", "port": 18080})["ok"]
+            for tool in ["mtr", "traceroute"]:
+                snapshots = path_snapshots(tool, "split.test")
+                try:
+                    snapshot = next(item for item in snapshots if item["ip"] is not None)
+                    assert snapshot["ip"] == "10.77.0.1", f"{tool} 未使用默认 DNS"
+                finally:
+                    snapshots.close()
+            tcp = api("/tools/tcping", "POST", {"host": "split.test", "port": 18080})
+            assert tcp["ok"] and tcp["ip"] == "10.77.0.1"
             assert not api("/tools/tcping", "POST", {"host": "10.77.0.1", "port": 1})["ok"]
-            get = api("/tools/curl", "POST", {"url": "http://target.test:18080/", "method": "GET"})
+            get = api("/tools/curl", "POST", {"url": "http://split.test:18080/", "method": "GET"})
             assert get["ok"] and get["status_code"] == 200 and get["stdout"] == "vpnweb-test-ok"
+            assert get["ip"] == "10.77.0.1", "CURL 未使用默认 DNS"
             assert get["response_headers"]["content-type"] == ["text/plain"]
             assert "GET / HTTP" in get["stderr"] and "Content-Type" in get["stderr"]
             head = api(
@@ -542,6 +618,16 @@ http.server.ThreadingHTTPServer(("0.0.0.0", 18080), Handler).serve_forever()
                 image_result["image_base64"]
             ).startswith(bytes.fromhex("89504e470d0a1a0a"))
             assert image_result["response_headers"]["content-type"] == ["image/png"]
+            for tool in ["ping", "mtr", "traceroute"]:
+                result = list(path_snapshots(tool, "dns-failure.test"))[-1]
+                assert result["done"] and result["ip"] is None and not result["ok"]
+                assert "DNS" in result["stderr"], f"{tool} 默认 DNS 失败后未报告解析错误"
+            for tool, payload in [
+                ("tcping", {"host": "dns-failure.test", "port": 18080}),
+                ("curl", {"url": "http://dns-failure.test:18080/", "method": "GET"}),
+            ]:
+                result = api(f"/tools/{tool}", "POST", payload)
+                assert not result["ok"] and "ip" not in result and "DNS" in result["stderr"]
             for path, payload in [
                 ("curl", {"url": "file:///etc/passwd", "method": "GET"}),
                 ("curl", {"url": "http://target.test", "method": "POST"}),

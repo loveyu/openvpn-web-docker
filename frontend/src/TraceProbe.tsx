@@ -219,12 +219,12 @@ export function TraceProbe({ tool }: { tool: TraceTool }) {
       <div className="panel-head">
         <div>
           <h2>{name}</h2>
-          <p>服务端每 2 秒推送结果，最多运行 60 秒；仅显示 IP，不做域名反解析。</p>
+          <p>最长运行 60 秒，使用容器默认 DNS。</p>
         </div>
         <Network size={20} />
       </div>
       <form
-        className="panel-body probe-form"
+        className="panel-body probe-form trace-form"
         onSubmit={(event) => {
           event.preventDefault();
           start();
@@ -240,22 +240,29 @@ export function TraceProbe({ tool }: { tool: TraceTool }) {
             placeholder="域名或 IPv4 地址"
           />
         </label>
-        <button className="button primary" disabled={active}>
+        <button className="button primary" disabled={active} aria-label={`开始 ${name}`}>
           <Play size={16} />
-          开始 {name}
+          开始
         </button>
         <button
           type="button"
           className="button"
           disabled={!active && !paused}
           onClick={togglePause}
+          aria-label={paused ? "恢复展示" : "暂停展示"}
         >
           {paused ? <Play size={16} /> : <Pause size={16} />}
-          {paused ? "恢复展示" : "暂停展示"}
+          {paused ? "恢复" : "暂停"}
         </button>
-        <button type="button" className="button danger" disabled={!active} onClick={terminate}>
+        <button
+          type="button"
+          className="button danger"
+          disabled={!active}
+          onClick={terminate}
+          aria-label="终止探测"
+        >
           <Square size={16} />
-          终止探测
+          终止
         </button>
       </form>
       <div className="probe-result">
@@ -269,7 +276,7 @@ export function TraceProbe({ tool }: { tool: TraceTool }) {
             ? phase === "done"
               ? "后端已完成并关闭连接，恢复展示可查看最终结果。"
               : "前端展示已暂停，后端继续探测；恢复时显示最新结果。"
-            : "暂停仅冻结展示；终止会同时停止前后端探测。离开此工具页也会终止探测。"}
+            : "暂停仅冻结展示；终止或离开此页会结束探测。"}
         </p>
         {error && (
           <p className="probe-error" role="alert">

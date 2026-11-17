@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
-    net::Ipv4Addr,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
     process::Stdio,
     time::{Duration, Instant},
 };
@@ -157,17 +157,42 @@ pub async fn command(program: &str, args: &[String], input: Option<&[u8]>) -> Re
     Ok(String::from_utf8_lossy(&result.stdout).into_owned())
 }
 
-pub fn question(name: &str) -> Result<Vec<u8>> {
+#[derive(Clone, Copy)]
+#[repr(u16)]
+pub enum RecordType {
+    A = 1,
+    Aaaa = 28,
+}
+
+impl RecordType {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::A => "A",
+            Self::Aaaa => "AAAA",
+        }
+    }
+
+    fn missing(self) -> &'static str {
+        match self {
+            Self::A => "未返回 IPv4 A 记录",
+            Self::Aaaa => "未返回 IPv6 AAAA 记录",
+        }
+    }
+}
+
+pub fn question(name: &str, record_type: RecordType) -> Result<Vec<u8>> {
     let mut bytes = vec![0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0];
     for label in domain(name)?.split('.') {
         bytes.push(label.len() as u8);
         bytes.extend_from_slice(label.as_bytes());
     }
-    bytes.extend_from_slice(&[0, 0, 1, 0, 1]);
+    bytes.push(0);
+    bytes.extend_from_slice(&(record_type as u16).to_be_bytes());
+    bytes.extend_from_slice(&[0, 1]);
     Ok(bytes)
 }
 
-pub fn answers(bytes: &[u8]) -> Result<Vec<Ipv4Addr>> {
+pub fn answers(bytes: &[u8], record_type: RecordType) -> Result<Vec<IpAddr>> {
     fn word(b: &[u8], p: usize) -> Result<u16> {
         Ok(u16::from_be_bytes(
             b.get(p..p + 2).ok_or("DNS 响应不完整")?.try_into()?,
@@ -208,8 +233,11 @@ pub fn answers(bytes: &[u8]) -> Result<Vec<Ipv4Addr>> {
         let length = usize::from(word(bytes, p + 8)?);
         p += 10;
         let data = bytes.get(p..p + length).ok_or("DNS 数据不完整")?;
-        if kind == 1 && class == 1 && length == 4 {
-            let ip = Ipv4Addr::new(data[0], data[1], data[2], data[3]);
+        if kind == record_type as u16 && class == 1 {
+            let ip = match record_type {
+                RecordType::A => IpAddr::V4(Ipv4Addr::from(<[u8; 4]>::try_from(data)?)),
+                RecordType::Aaaa => IpAddr::V6(Ipv6Addr::from(<[u8; 16]>::try_from(data)?)),
+            };
             if !result.contains(&ip) {
                 result.push(ip)
             }
@@ -219,9 +247,14 @@ pub fn answers(bytes: &[u8]) -> Result<Vec<Ipv4Addr>> {
     Ok(result)
 }
 
-pub async fn httpdns(provider: Provider, ip: Ipv4Addr, name: String) -> Value {
+pub async fn httpdns(
+    provider: Provider,
+    ip: Ipv4Addr,
+    name: String,
+    record_type: RecordType,
+) -> Value {
     let start = Instant::now();
-    let mut result = json!({"provider":provider.name,"provider_id":provider.id,"region":provider.region,"url":provider.url,"protocol":provider.protocol,"ip":ip,"ok":false,"answers":[]});
+    let mut result = json!({"provider":provider.name,"provider_id":provider.id,"region":provider.region,"url":provider.url,"protocol":provider.protocol,"ip":ip,"record_type":record_type.name(),"ok":false,"answers":[]});
     let work = async {
         let (host, port) = http_target(&provider.url)?;
         let run = std::env::var("RUN_DIR").unwrap_or_else(|_| "/run/vpnweb".into());
@@ -248,7 +281,7 @@ pub async fn httpdns(provider: Provider, ip: Ipv4Addr, name: String) -> Value {
             "--resolve".into(),
             format!("{host}:{port}:{ip}"),
         ];
-        let query = question(&name)?;
+        let query = question(&name, record_type)?;
         if provider.protocol == "doh" {
             args.extend([
                 "--header".into(),
@@ -266,10 +299,11 @@ pub async fn httpdns(provider: Provider, ip: Ipv4Addr, name: String) -> Value {
                 "Accept: application/dns-json".into(),
                 "--url".into(),
                 format!(
-                    "{}{}name={}&type=A",
+                    "{}{}name={}&type={}",
                     provider.url,
                     if provider.url.contains('?') { "&" } else { "?" },
-                    domain(&name)?
+                    domain(&name)?,
+                    record_type.name()
                 ),
             ]);
         }
@@ -291,7 +325,7 @@ pub async fn httpdns(provider: Provider, ip: Ipv4Addr, name: String) -> Value {
                 .into());
         }
         let records = if provider.protocol == "doh" {
-            answers(&response.stdout)?
+            answers(&response.stdout, record_type)?
         } else {
             let value: Value = serde_json::from_slice(&response.stdout)?;
             if value["Status"] != 0 {
@@ -299,20 +333,20 @@ pub async fn httpdns(provider: Provider, ip: Ipv4Addr, name: String) -> Value {
             }
             value["Answer"]
                 .as_array()
-                .ok_or("HTTPDNS 未返回 A 记录")?
+                .ok_or(record_type.missing())?
                 .iter()
-                .filter(|item| item["type"] == 1)
+                .filter(|item| item["type"] == record_type as u16)
                 .map(|item| {
-                    item["data"]
-                        .as_str()
-                        .ok_or("无效 DNS 记录")?
-                        .parse()
-                        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+                    let value = item["data"].as_str().ok_or("无效 DNS 记录")?;
+                    Ok(match record_type {
+                        RecordType::A => IpAddr::V4(value.parse()?),
+                        RecordType::Aaaa => IpAddr::V6(value.parse()?),
+                    })
                 })
-                .collect::<Result<Vec<Ipv4Addr>>>()?
+                .collect::<Result<Vec<IpAddr>>>()?
         };
         if records.is_empty() {
-            return Err("未返回 IPv4 A 记录".into());
+            return Err(record_type.missing().into());
         }
         Ok::<_, Box<dyn std::error::Error + Send + Sync>>(records)
     }
@@ -328,7 +362,11 @@ pub async fn httpdns(provider: Provider, ip: Ipv4Addr, name: String) -> Value {
     result
 }
 
-pub async fn httpdns_all(name: &str, custom: Option<Provider>) -> Result<Vec<Value>> {
+pub async fn httpdns_all(
+    name: &str,
+    custom: Option<Provider>,
+    record_types: &[RecordType],
+) -> Result<Vec<Value>> {
     domain(name)?;
     let mut list = providers();
     if let Some(custom) = custom
@@ -341,7 +379,9 @@ pub async fn httpdns_all(name: &str, custom: Option<Provider>) -> Result<Vec<Val
     let mut tasks = JoinSet::new();
     for provider in list {
         for ip in provider.ips.clone() {
-            tasks.spawn(httpdns(provider.clone(), ip, name.into()));
+            for &record_type in record_types {
+                tasks.spawn(httpdns(provider.clone(), ip, name.into(), record_type));
+            }
         }
     }
     let mut results = Vec::new();
@@ -365,7 +405,7 @@ pub async fn resolve(vpn: &crate::config::Vpn, name: &str, catalog: &[Value]) ->
     let preferred = configured(vpn);
     let mut tasks = JoinSet::new();
     for ip in &preferred.ips {
-        tasks.spawn(httpdns(preferred.clone(), *ip, name.into()));
+        tasks.spawn(httpdns(preferred.clone(), *ip, name.into(), RecordType::A));
     }
     let mut results = Vec::new();
     while let Some(item) = tasks.join_next().await {
@@ -392,12 +432,18 @@ pub async fn resolve(vpn: &crate::config::Vpn, name: &str, catalog: &[Value]) ->
             ips: vec![],
             protocol: item["protocol"].as_str().unwrap().into(),
         };
-        let answer = httpdns(provider, item["ip"].as_str().unwrap().parse()?, name.into()).await;
+        let answer = httpdns(
+            provider,
+            item["ip"].as_str().unwrap().parse()?,
+            name.into(),
+            RecordType::A,
+        )
+        .await;
         if answer["ok"] == true {
             return Ok(answer);
         }
     }
-    httpdns_all(name, None)
+    httpdns_all(name, None, &[RecordType::A])
         .await?
         .into_iter()
         .find(|item| item["ok"] == true)
@@ -447,38 +493,64 @@ pub async fn tcping(host: &str, port: u16, timeout: u64) -> Option<f64> {
     Some(start.elapsed().as_secs_f64() * 1000.0)
 }
 
-pub async fn vpn_dns(server: &str, name: &str) -> Value {
+pub async fn dns(server: Option<&str>, name: &str, record_type: RecordType) -> Value {
     let start = Instant::now();
-    let mut result = json!({"provider":"VPN DNS","ip":server,"answers":[],"ok":false});
-    let response = output(
-        "dig",
-        &[
-            format!("@{server}"),
-            name.into(),
-            "A".into(),
-            "+short".into(),
-            "+time=2".into(),
-            "+tries=1".into(),
-        ],
-        None,
-        3,
-    )
-    .await;
+    let mut result = json!({
+        "provider": if server.is_some() { "VPN DNS" } else { "默认 DNS" },
+        "ip": server.unwrap_or("系统默认"), "record_type": record_type.name(), "answers": [], "ok": false
+    });
+    let mut arguments = [
+        name,
+        record_type.name(),
+        "+noall",
+        "+answer",
+        "+stats",
+        "+time=2",
+        "+tries=1",
+    ]
+    .map(str::to_owned)
+    .to_vec();
+    if let Some(server) = server {
+        arguments.push(format!("@{server}"));
+    }
+    // 不指定服务器时让 dig 使用容器当前的 resolv.conf，保留默认解析的实际行为。
+    let response = output("dig", &arguments, None, 3).await;
     if let Ok(response) = response {
-        let addresses = String::from_utf8_lossy(&response.stdout)
-            .lines()
-            .filter_map(|line| line.parse::<Ipv4Addr>().ok())
-            .collect::<Vec<_>>();
+        let text = String::from_utf8_lossy(&response.stdout);
+        let (addresses, responding_server) = dns_response(&text, record_type);
+        if let Some(server) = responding_server {
+            result["ip"] = json!(server);
+        }
         if response.status.success() && !addresses.is_empty() {
             result["ok"] = json!(true);
             result["answers"] = json!(addresses)
         }
     }
     if result["ok"] != true {
-        result["error"] = json!("DNS 无响应或未返回 A 记录")
+        result["error"] = json!(format!("DNS 无响应或{}", record_type.missing()))
     }
     result["latency_ms"] = json!(start.elapsed().as_secs_f64() * 1000.0);
     result
+}
+
+fn dns_response(text: &str, record_type: RecordType) -> (Vec<IpAddr>, Option<&str>) {
+    let mut addresses = Vec::new();
+    let mut server = None;
+    for line in text.lines() {
+        if let Some(value) = line.strip_prefix(";; SERVER: ") {
+            server = value.split_once('#').map(|(ip, _)| ip);
+        }
+        let mut fields = line.split_whitespace();
+        if fields.nth(3) == Some(record_type.name())
+            && let Some(ip) = fields.next().and_then(|value| match record_type {
+                RecordType::A => value.parse::<Ipv4Addr>().ok().map(IpAddr::V4),
+                RecordType::Aaaa => value.parse::<Ipv6Addr>().ok().map(IpAddr::V6),
+            })
+        {
+            addresses.push(ip);
+        }
+    }
+    (addresses, server)
 }
 
 pub async fn custom_health(settings: &crate::config::Health) -> Value {
@@ -589,14 +661,63 @@ pub fn timestamp() -> u64 {
 mod tests {
     use super::*;
     #[test]
+    fn reads_dns_addresses_and_actual_responding_server() {
+        let response = "example.com. 60 IN CNAME edge.example.com.\n\
+                        edge.example.com. 60 IN A 192.0.2.1\n\
+                        edge.example.com. 60 IN A 192.0.2.2\n\
+                        edge.example.com. 60 IN AAAA 2001:db8::1\n\
+                        ;; Query time: 12 msec\n\
+                        ;; SERVER: 10.0.0.1#53(10.0.0.1) (UDP)\n";
+        assert_eq!(
+            dns_response(response, RecordType::A),
+            (
+                vec![
+                    IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)),
+                    IpAddr::V4(Ipv4Addr::new(192, 0, 2, 2))
+                ],
+                Some("10.0.0.1")
+            )
+        );
+        assert_eq!(
+            dns_response(response, RecordType::Aaaa),
+            (
+                vec!["2001:db8::1".parse::<IpAddr>().unwrap()],
+                Some("10.0.0.1")
+            )
+        );
+        assert_eq!(
+            dns_response(";; SERVER: 10.0.0.1#53(10.0.0.1) (UDP)\n", RecordType::Aaaa),
+            (vec![], Some("10.0.0.1"))
+        );
+    }
+    #[test]
     fn reads_compressed_dns_answers_and_rejects_truncation() {
-        let mut query = question("example.com").unwrap();
+        assert!(
+            question("example.com", RecordType::A)
+                .unwrap()
+                .ends_with(&[0, 1, 0, 1])
+        );
+        assert!(
+            question("example.com", RecordType::Aaaa)
+                .unwrap()
+                .ends_with(&[0, 28, 0, 1])
+        );
+        let mut query = question("example.com", RecordType::Aaaa).unwrap();
         query[2] = 0x81;
         query[3] = 0x80;
-        query[7] = 1;
+        query[7] = 2;
         query.extend_from_slice(&[0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 30, 0, 4, 192, 0, 2, 1]);
-        assert_eq!(answers(&query).unwrap(), vec![Ipv4Addr::new(192, 0, 2, 1)]);
-        assert!(answers(&query[..query.len() - 2]).is_err());
+        query.extend_from_slice(&[0xc0, 0x0c, 0, 28, 0, 1, 0, 0, 0, 30, 0, 16]);
+        query.extend_from_slice(&"2001:db8::1".parse::<Ipv6Addr>().unwrap().octets());
+        assert_eq!(
+            answers(&query, RecordType::A).unwrap(),
+            vec![IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1))]
+        );
+        assert_eq!(
+            answers(&query, RecordType::Aaaa).unwrap(),
+            vec!["2001:db8::1".parse::<IpAddr>().unwrap()]
+        );
+        assert!(answers(&query[..query.len() - 2], RecordType::Aaaa).is_err());
     }
     #[test]
     fn rejects_invalid_domains_and_authenticated_urls() {

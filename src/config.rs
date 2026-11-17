@@ -77,6 +77,7 @@ pub struct Vpn {
     pub endpoints: Vec<Endpoint>,
     pub selected_endpoint: String,
     pub selection_mode: SelectionMode,
+    pub route_mode: RouteMode,
     pub username: String,
     pub password: String,
     pub ca: String,
@@ -100,6 +101,7 @@ impl Default for Vpn {
             endpoints: Vec::new(),
             selected_endpoint: String::new(),
             selection_mode: SelectionMode::Auto,
+            route_mode: RouteMode::All,
             username: String::new(),
             password: String::new(),
             ca: String::new(),
@@ -124,6 +126,14 @@ pub enum SelectionMode {
     #[default]
     Auto,
     Manual,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum RouteMode {
+    #[default]
+    All,
+    Config,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
@@ -442,6 +452,13 @@ mod tests {
         assert!(config.validate().is_ok());
         assert!(!config.sshd.enabled && !config.socks5.enabled);
         assert!(!config.sshd.allow_login);
+    }
+    #[test]
+    fn existing_vpn_configs_default_to_all_routes() {
+        let vpn: Vpn = serde_json::from_str(r#"{"config":"client"}"#).unwrap();
+        assert_eq!(vpn.route_mode, RouteMode::All);
+        let vpn: Vpn = serde_json::from_str(r#"{"route_mode":"config"}"#).unwrap();
+        assert_eq!(vpn.route_mode, RouteMode::Config);
     }
     #[test]
     fn existing_ssh_configs_require_explicit_login_permission() {

@@ -41,6 +41,7 @@ profiles:
           client
           remote-cert-tls server
         selection_mode: auto
+        route_mode: all
         selected_endpoint: endpoint-1
         endpoints:
           - id: endpoint-1

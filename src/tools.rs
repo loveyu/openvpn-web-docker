@@ -1,19 +1,24 @@
-use crate::{config::Vpn, network};
+use crate::network;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
 use std::{net::Ipv4Addr, time::Instant};
 
 pub mod path_trace;
 
-async fn address(vpn: &Vpn, host: &str) -> network::Result<Ipv4Addr> {
+async fn address(host: &str) -> network::Result<Ipv4Addr> {
     if let Ok(ip) = host.parse() {
         return Ok(ip);
     }
-    let answer = network::resolve(vpn, host, &[]).await?;
+    // 网络工具使用当前默认 DNS，确保内网域名遵循 VPN 已应用的解析设置。
+    let answer = network::dns(None, host, network::RecordType::A).await;
+    if answer["ok"] != true {
+        return Err(answer["error"].as_str().unwrap().into());
+    }
     answer["answers"][0]
         .as_str()
-        .ok_or_else(|| "HTTPDNS 没有返回 IPv4 地址".into())
-        .and_then(|ip| ip.parse().map_err(Into::into))
+        .unwrap()
+        .parse()
+        .map_err(Into::into)
 }
 
 fn failure(target: &str, start: Instant, error: impl std::fmt::Display) -> Value {
@@ -33,10 +38,10 @@ fn trace(bytes: &[u8]) -> String {
     )
 }
 
-pub async fn tcping(vpn: &Vpn, host: &str, port: u16) -> Value {
+pub async fn tcping(host: &str, port: u16) -> Value {
     let target = format!("{host}:{port}");
     let start = Instant::now();
-    let ip = match address(vpn, host).await {
+    let ip = match address(host).await {
         Ok(ip) => ip,
         Err(error) => return failure(&target, start, error),
     };
@@ -56,13 +61,13 @@ pub async fn tcping(vpn: &Vpn, host: &str, port: u16) -> Value {
         "stderr":error.unwrap_or_default()})
 }
 
-pub async fn curl(vpn: &Vpn, url: &str, method: &str) -> Value {
+pub async fn curl(url: &str, method: &str) -> Value {
     let start = Instant::now();
     let (host, port) = match network::http_target(url) {
         Ok(target) => target,
         Err(error) => return failure(url, start, error),
     };
-    let ip = match address(vpn, &host).await {
+    let ip = match address(&host).await {
         Ok(ip) => ip,
         Err(error) => return failure(url, start, error),
     };

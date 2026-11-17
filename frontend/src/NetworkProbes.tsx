@@ -169,9 +169,7 @@ export function NetworkProbes({ tool }: { tool: "tcping" | "curl" }) {
           <div className="panel-head">
             <div>
               <h2>CURL</h2>
-              <p>
-                GET / HEAD 探测，使用 -vvv 记录连接与响应详情。最多读取 2 MiB，单次请求最长 20 秒。
-              </p>
+              <p>GET / HEAD 请求，最长 20 秒，最多读取 2 MiB。</p>
             </div>
             <Globe2 size={20} />
           </div>
@@ -216,10 +214,7 @@ export function NetworkProbes({ tool }: { tool: "tcping" | "curl" }) {
       )}
       <div className="note">
         <Network size={18} />
-        <p>
-          探测从容器发起，遵循当前网络路由和出口保护规则。域名使用已配置的 HTTPDNS
-          解析，超时或拒绝连接会保留诊断结果。
-        </p>
+        <p>探测从容器发起，使用默认 DNS，遵循当前路由和出口保护规则。</p>
       </div>
     </>
   );

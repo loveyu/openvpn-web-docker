@@ -1,5 +1,4 @@
 use super::address;
-use crate::config::Vpn;
 use axum::extract::ws::{CloseFrame, Message, WebSocket};
 use serde::{Deserialize, Serialize};
 use std::{net::Ipv4Addr, process::Stdio, time::Duration};
@@ -81,7 +80,7 @@ async fn terminate(child: &mut Child, group: u32) {
     let _ = child.kill().await;
 }
 
-pub async fn run(mut socket: WebSocket, vpn: Vpn, tool: Tool, target: String) {
+pub async fn run(mut socket: WebSocket, tool: Tool, target: String) {
     let start = Instant::now();
     let deadline = start + Duration::from_secs(60);
     let mut ticks = interval_at(start + Duration::from_secs(2), Duration::from_secs(2));
@@ -99,7 +98,7 @@ pub async fn run(mut socket: WebSocket, vpn: Vpn, tool: Tool, target: String) {
     };
     let ip = {
         let target = snapshot.target.clone();
-        let resolution = timeout_at(deadline, address(&vpn, &target));
+        let resolution = timeout_at(deadline, address(&target));
         tokio::pin!(resolution);
         loop {
             tokio::select! {

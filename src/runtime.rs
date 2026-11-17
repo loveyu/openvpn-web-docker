@@ -1,6 +1,7 @@
 use crate::{
     config::{
-        self, Config, DnsMode, HTTP_PORT, Protocol, SOCKS5_PORT, SSH_PORT, SelectionMode, WEB_PORT,
+        self, Config, DnsMode, HTTP_PORT, Protocol, RouteMode, SOCKS5_PORT, SSH_PORT,
+        SelectionMode, WEB_PORT,
     },
     network::{self, Result},
     storage,
@@ -225,7 +226,6 @@ fn parse(vpn: &config::Vpn) -> Result<ParsedConfig> {
         "askpass",
         "route-noexec",
         "ifconfig-noexec",
-        "route-nopull",
         "secret",
         "pkcs11-providers",
         "providers",
@@ -282,6 +282,40 @@ fn parse(vpn: &config::Vpn) -> Result<ParsedConfig> {
             continue;
         }
         let option = tokens[0].trim_start_matches("--");
+        if vpn.route_mode == RouteMode::All {
+            // 全隧道统一生成路由，避免原文的静态路由、禁用指令或过滤器绕开此模式。
+            if matches!(
+                option,
+                "route"
+                    | "route-ipv6"
+                    | "route-gateway"
+                    | "route-ipv6-gateway"
+                    | "route-metric"
+                    | "route-delay"
+                    | "route-method"
+                    | "route-nopull"
+                    | "route-noexec"
+                    | "redirect-gateway"
+                    | "redirect-private"
+                    | "max-routes"
+            ) {
+                continue;
+            }
+            if option == "pull-filter"
+                && tokens
+                    .get(1)
+                    .is_some_and(|action| matches!(action.as_str(), "ignore" | "reject"))
+                && tokens.get(2).is_some_and(|filter| {
+                    ["route", "redirect-gateway", "redirect-private"]
+                        .iter()
+                        .any(|directive| {
+                            directive.starts_with(filter) || filter.starts_with(directive)
+                        })
+                })
+            {
+                continue;
+            }
+        }
         if option == "dev" && tokens.len() == 2 && matches!(tokens[1].as_str(), "tun" | "tun0") {
             continue;
         }
@@ -324,7 +358,6 @@ fn parse(vpn: &config::Vpn) -> Result<ParsedConfig> {
                     return Err(format!("{option} 引用了外部文件，请把完整内容填入证书表单").into());
                 }
             }
-            "redirect-gateway" => {}
             "key-direction" if !vpn.tls_auth.is_empty() => {}
             _ => kept.push(line.into()),
         }
@@ -377,6 +410,19 @@ fn parse(vpn: &config::Vpn) -> Result<ParsedConfig> {
     }
     if normalized.is_empty() {
         return Err("请配置至少一个 OpenVPN remote 或 endpoint".into());
+    }
+    if vpn.route_mode == RouteMode::All {
+        // 只忽略下发的静态路由和重定向；保留下发的 route-gateway 以支持 subnet 拓扑。
+        kept.splice(
+            0..0,
+            args(&[
+                "pull-filter ignore \"route \"",
+                "pull-filter ignore \"route-ipv6 \"",
+                "pull-filter ignore \"redirect-gateway\"",
+                "pull-filter ignore \"redirect-private\"",
+            ]),
+        );
+        kept.push("redirect-gateway def1".into());
     }
     // DNS 由界面统一管理；优先接收下发值，避免原文的 ignore/reject 过滤器使自动模式失效。
     kept.insert(0, "pull-filter accept \"dhcp-option DNS \"".into());
@@ -769,7 +815,6 @@ async fn render_vpn(rt: &Runtime, config: &Active) -> Result<Vec<Remote>> {
     base.extend(args(&[
         "dev tun0",
         "nobind",
-        "redirect-gateway def1",
         "auth-nocache",
         "script-security 2",
         "up \"/usr/local/bin/openvpn-web runtime vpn-up\"",
@@ -1502,6 +1547,7 @@ pub async fn dispatch(data: PathBuf, values: &[String]) -> Result<Value> {
             let results = network::httpdns_all(
                 "example.com",
                 Some(network::configured(&rt.saved()?.settings.vpn)),
+                &[network::RecordType::A],
             )
             .await?;
             let value =
@@ -1513,37 +1559,45 @@ pub async fn dispatch(data: PathBuf, values: &[String]) -> Result<Value> {
             let domain = network::domain(values.get(1).ok_or("请输入域名")?)?;
             let config = rt.saved()?;
             let dns = rt.read("dns.json", json!({}))?;
-            let mut servers = config
-                .settings
-                .vpn
-                .dns
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>();
-            for field in ["effective", "pushed"] {
-                if let Some(items) = dns[field].as_array() {
-                    servers.extend(
-                        items
-                            .iter()
-                            .filter_map(|item| item.as_str().map(str::to_owned)),
-                    )
-                }
-            }
+            // 仅测试已应用的地址，避免未启用或尚未应用的配置混入当前结果。
+            let mut servers = dns["effective"]
+                .as_array()
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str().map(str::to_owned))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
             servers.sort();
             servers.dedup();
             let mut tasks = JoinSet::new();
             for server in servers {
-                let domain = domain.clone();
-                tasks.spawn(async move { network::vpn_dns(&server, &domain).await });
+                for record_type in [network::RecordType::A, network::RecordType::Aaaa] {
+                    let domain = domain.clone();
+                    let server = server.clone();
+                    tasks.spawn(
+                        async move { network::dns(Some(&server), &domain, record_type).await },
+                    );
+                }
             }
-            let http =
-                network::httpdns_all(&domain, Some(network::configured(&config.settings.vpn)))
-                    .await?;
+            let (default_a, default_aaaa, http) = tokio::join!(
+                network::dns(None, &domain, network::RecordType::A),
+                network::dns(None, &domain, network::RecordType::Aaaa),
+                network::httpdns_all(
+                    &domain,
+                    Some(network::configured(&config.settings.vpn)),
+                    &[network::RecordType::A, network::RecordType::Aaaa]
+                )
+            );
+            let http = http?;
             let mut vpn = Vec::new();
             while let Some(result) = tasks.join_next().await {
                 vpn.push(result?)
             }
-            Ok(json!({"domain":domain,"httpdns":http,"vpn_dns":vpn}))
+            Ok(
+                json!({"domain":domain,"default_dns":[default_a,default_aaaa],"vpn_dns":vpn,"httpdns":http}),
+            )
         }
         "container-health" => {
             let (services, firewall) = tokio::try_join!(processes(), health::firewall_ready())?;
@@ -1600,6 +1654,58 @@ mod tests {
         let (kept, remotes) = parse(&vpn).unwrap();
         assert_eq!(remotes.len(), 2);
         assert!(!kept.iter().any(|line| line == "dev tun"));
+        vpn.config += "\nup /tmp/run";
+        assert!(parse(&vpn).is_err());
+    }
+
+    #[test]
+    fn all_routes_override_original_limits_without_removing_dns_filters() {
+        let vpn = config::Vpn {
+            config: "client\nremote 192.0.2.1\nroute-nopull\nroute 10.0.0.0 255.0.0.0 net_gateway\nroute-metric 800\nredirect-gateway local\npull-filter ignore \"route \"\npull-filter reject \"redirect-gateway\"\npull-filter ignore \"\"\npull-filter ignore \"dhcp-option DNS \"".into(),
+            ..Default::default()
+        };
+        let (options, _) = parse(&vpn).unwrap();
+        assert!(options.contains(&"redirect-gateway def1".into()));
+        assert!(!options.iter().any(|line| line.starts_with("route")
+            || line == "redirect-gateway local"
+            || line.starts_with("pull-filter reject")
+            || line == "pull-filter ignore \"\""));
+        assert!(options.contains(&"pull-filter ignore \"route \"".into()));
+        assert!(options.contains(&"pull-filter ignore \"dhcp-option DNS \"".into()));
+        assert_eq!(options[0], "pull-filter accept \"dhcp-option DNS \"");
+    }
+
+    #[test]
+    fn configured_routes_preserve_limits_and_do_not_force_a_default_route() {
+        let routing = [
+            "route-nopull",
+            "route 10.0.0.0 255.0.0.0",
+            "route-metric 800",
+            "pull-filter ignore \"route \"",
+        ];
+        let mut vpn = config::Vpn {
+            config: format!("client\nremote 192.0.2.1\n{}", routing.join("\n")),
+            route_mode: RouteMode::Config,
+            ..Default::default()
+        };
+        let (options, _) = parse(&vpn).unwrap();
+        assert!(
+            routing
+                .iter()
+                .all(|line| options.iter().any(|option| option == line))
+        );
+        assert!(
+            !options
+                .iter()
+                .any(|line| line.starts_with("redirect-gateway"))
+        );
+        vpn.config += "\nredirect-gateway def1 bypass-dhcp";
+        assert!(
+            parse(&vpn)
+                .unwrap()
+                .0
+                .contains(&"redirect-gateway def1 bypass-dhcp".into())
+        );
         vpn.config += "\nup /tmp/run";
         assert!(parse(&vpn).is_err());
     }
