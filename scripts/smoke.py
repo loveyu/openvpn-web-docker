@@ -5,7 +5,6 @@ import argparse
 import base64
 import copy
 import json
-from pathlib import Path
 import secrets
 import subprocess
 import tempfile
@@ -13,6 +12,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from pathlib import Path
 
 
 def run(*args, check=True, input=None):
@@ -36,7 +36,9 @@ def wait(work, timeout=60):
 
 
 def main(image):
-    exposed = json.loads(run("docker", "image", "inspect", "--format", "{{json .Config.ExposedPorts}}", image).stdout)
+    exposed = json.loads(
+        run("docker", "image", "inspect", "--format", "{{json .Config.ExposedPorts}}", image).stdout
+    )
     assert set(exposed) == {"80/tcp", "8888/tcp", "1080/tcp", "22/tcp"}, exposed
     identifier = "vpnweb-test-" + secrets.token_hex(4)
     server, client, network = identifier + "-server", identifier + "-client", identifier + "-net"
@@ -51,9 +53,16 @@ def main(image):
             headers["Authorization"] = authorization
         if origin or method != "GET":
             headers["Origin"] = origin or f"http://127.0.0.1:{host_port(80)}"
-        request = urllib.request.Request(f"http://127.0.0.1:{host_port(80)}/api{path}", data=json.dumps(data).encode() if data is not None else None, headers=headers, method=method)
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{host_port(80)}/api{path}",
+            data=json.dumps(data).encode() if data is not None else None,
+            headers=headers,
+            method=method,
+        )
         try:
-            with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=180) as response:
+            with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(
+                request, timeout=180
+            ) as response:
                 return json.load(response)
         except urllib.error.HTTPError as error:
             if error.code not in [401, 403]:
@@ -63,7 +72,9 @@ def main(image):
     def healthz():
         request = urllib.request.Request(f"http://127.0.0.1:{host_port(80)}/healthz")
         try:
-            with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=5) as response:
+            with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(
+                request, timeout=5
+            ) as response:
                 return response.status
         except urllib.error.HTTPError as error:
             return error.code
@@ -72,7 +83,18 @@ def main(image):
         return run("docker", "exec", client, *args, check=check)
 
     def proxy(port, kind, auth=None, success=True):
-        args = ["curl", "--silent", "--show-error", "--fail", "--max-time", "5", "--noproxy", "", "--proxy", f"{kind}://127.0.0.1:{host_port(port)}"]
+        args = [
+            "curl",
+            "--silent",
+            "--show-error",
+            "--fail",
+            "--max-time",
+            "5",
+            "--noproxy",
+            "",
+            "--proxy",
+            f"{kind}://127.0.0.1:{host_port(port)}",
+        ]
         if auth:
             args += ["--proxy-user", auth]
         result = run(*args, "http://target.test:18080/", check=False)
@@ -83,16 +105,36 @@ def main(image):
         return True
 
     def verify_blocked(address):
-        result = container("curl", "--noproxy", "*", "--max-time", "2", f"http://{address}:18081/", check=False)
+        result = container(
+            "curl", "--noproxy", "*", "--max-time", "2", f"http://{address}:18081/", check=False
+        )
         assert result.returncode != 0, "出口保护失败：允许了隧道外直接连接"
 
     def ssh(directory, command="printf ssh-ok", password=False):
-        args = ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-p", host_port(22)]
+        args = [
+            "ssh",
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+            "-p",
+            host_port(22),
+        ]
         if password:
             askpass = directory / "askpass"
             askpass.write_text("#!/bin/sh\necho ssh-test-password\n")
             askpass.chmod(0o700)
-            args = ["env", f"SSH_ASKPASS={askpass}", "SSH_ASKPASS_REQUIRE=force", "DISPLAY=:0", *args, "-o", "PubkeyAuthentication=no", "-o", "NumberOfPasswordPrompts=1"]
+            args = [
+                "env",
+                f"SSH_ASKPASS={askpass}",
+                "SSH_ASKPASS_REQUIRE=force",
+                "DISPLAY=:0",
+                *args,
+                "-o",
+                "PubkeyAuthentication=no",
+                "-o",
+                "NumberOfPasswordPrompts=1",
+            ]
         else:
             args += ["-i", str(directory / "ssh_key"), "-o", "BatchMode=yes"]
         return run(*args, "work@127.0.0.1", command).stdout
@@ -103,12 +145,60 @@ def main(image):
             directory = Path(temporary)
             # 夹具通过只读挂载注入，产品镜像不包含任何测试程序。
             for name in ["ca", "server", "client"]:
-                run("openssl", "req", "-new", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes", "-keyout", str(directory / f"{name}.key"), "-out", str(directory / f"{name}.csr"), "-subj", f"/CN={name}")
-            run("openssl", "x509", "-req", "-in", str(directory / "ca.csr"), "-signkey", str(directory / "ca.key"), "-out", str(directory / "ca.crt"), "-days", "1", "-extfile", "/dev/stdin", input="basicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,cRLSign\n")
+                run(
+                    "openssl",
+                    "req",
+                    "-new",
+                    "-newkey",
+                    "ec",
+                    "-pkeyopt",
+                    "ec_paramgen_curve:P-256",
+                    "-nodes",
+                    "-keyout",
+                    str(directory / f"{name}.key"),
+                    "-out",
+                    str(directory / f"{name}.csr"),
+                    "-subj",
+                    f"/CN={name}",
+                )
+            run(
+                "openssl",
+                "x509",
+                "-req",
+                "-in",
+                str(directory / "ca.csr"),
+                "-signkey",
+                str(directory / "ca.key"),
+                "-out",
+                str(directory / "ca.crt"),
+                "-days",
+                "1",
+                "-extfile",
+                "/dev/stdin",
+                input="basicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,cRLSign\n",
+            )
             for name in ["server", "client"]:
-                run("openssl", "x509", "-req", "-in", str(directory / f"{name}.csr"), "-CA", str(directory / "ca.crt"), "-CAkey", str(directory / "ca.key"), "-CAcreateserial", "-out", str(directory / f"{name}.crt"), "-days", "1", "-extfile", "/dev/stdin", input=f"extendedKeyUsage={'serverAuth' if name == 'server' else 'clientAuth'}\nkeyUsage=digitalSignature\n")
+                run(
+                    "openssl",
+                    "x509",
+                    "-req",
+                    "-in",
+                    str(directory / f"{name}.csr"),
+                    "-CA",
+                    str(directory / "ca.crt"),
+                    "-CAkey",
+                    str(directory / "ca.key"),
+                    "-CAcreateserial",
+                    "-out",
+                    str(directory / f"{name}.crt"),
+                    "-days",
+                    "1",
+                    "-extfile",
+                    "/dev/stdin",
+                    input=f"extendedKeyUsage={'serverAuth' if name == 'server' else 'clientAuth'}\nkeyUsage=digitalSignature\n",
+                )
             run("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(directory / "ssh_key"))
-            (directory / "server.conf").write_text('''server 10.77.0.0 255.255.255.0
+            (directory / "server.conf").write_text("""server 10.77.0.0 255.255.255.0
 dev tun0
 proto udp4
 port 1194
@@ -120,8 +210,10 @@ dh none
 push "dhcp-option DNS 10.77.0.1"
 keepalive 2 10
 verb 3
-''')
-            (directory / "fixture.py").write_text('''import http.server, json, socket, struct, sys, threading, urllib.parse, zlib
+""")
+            (
+                directory / "fixture.py"
+            ).write_text("""import http.server, json, socket, struct, sys, threading, urllib.parse, zlib
 address = sys.argv[1]
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
@@ -153,16 +245,68 @@ def dns():
 threading.Thread(target=dns, daemon=True).start()
 threading.Thread(target=http.server.ThreadingHTTPServer(("0.0.0.0", 18081), Handler).serve_forever, daemon=True).start()
 http.server.ThreadingHTTPServer(("0.0.0.0", 18080), Handler).serve_forever()
-''')
-            run("docker", "run", "-d", "--name", server, "--network", network, "--cap-add", "NET_ADMIN", "--device", "/dev/net/tun", "-v", f"{directory}:/test:ro", "--entrypoint", "/usr/sbin/openvpn", image, "--config", "/test/server.conf")
-            address = run("docker", "inspect", "--format", f'{{{{(index .NetworkSettings.Networks "{network}").IPAddress}}}}', server).stdout.strip()
+""")
+            run(
+                "docker",
+                "run",
+                "-d",
+                "--name",
+                server,
+                "--network",
+                network,
+                "--cap-add",
+                "NET_ADMIN",
+                "--device",
+                "/dev/net/tun",
+                "-v",
+                f"{directory}:/test:ro",
+                "--entrypoint",
+                "/usr/sbin/openvpn",
+                image,
+                "--config",
+                "/test/server.conf",
+            )
+            address = run(
+                "docker",
+                "inspect",
+                "--format",
+                f'{{{{(index .NetworkSettings.Networks "{network}").IPAddress}}}}',
+                server,
+            ).stdout.strip()
             run("docker", "exec", "-d", server, "python3", "/test/fixture.py", address)
-            args = ["docker", "run", "-d", "--name", client, "--network", network, "--cap-add", "NET_ADMIN", "--device", "/dev/net/tun", "--sysctl", "net.ipv4.conf.all.src_valid_mark=1", "--sysctl", "net.ipv4.conf.all.rp_filter=2", "--tmpfs", "/run", "-e", "ADMIN_USERNAME=admin", "-e", "ADMIN_PASSWORD=test-admin-password"]
+            args = [
+                "docker",
+                "run",
+                "-d",
+                "--name",
+                client,
+                "--network",
+                network,
+                "--cap-add",
+                "NET_ADMIN",
+                "--device",
+                "/dev/net/tun",
+                "--sysctl",
+                "net.ipv4.conf.all.src_valid_mark=1",
+                "--sysctl",
+                "net.ipv4.conf.all.rp_filter=2",
+                "--tmpfs",
+                "/run",
+                "-e",
+                "ADMIN_USERNAME=admin",
+                "-e",
+                "ADMIN_PASSWORD=test-admin-password",
+            ]
             for port in [80, 8888, 1080, 22]:
                 args += ["-p", f"127.0.0.1::{port}"]
             run(*args, image)
             document = wait(lambda: api("/config"))
-            wait(lambda: any(item["name"] == "http" and item["state"] == "RUNNING" for item in api("/status")["services"]))
+            wait(
+                lambda: any(
+                    item["name"] == "http" and item["state"] == "RUNNING"
+                    for item in api("/status")["services"]
+                )
+            )
             try:
                 api("/config", authorized=False)
                 raise RuntimeError("配置接口未要求 Basic 认证")
@@ -187,24 +331,69 @@ http.server.ThreadingHTTPServer(("0.0.0.0", 18080), Handler).serve_forever()
 
             settings = document["profiles"][0]["settings"]
             endpoint = str(uuid.uuid4())
-            settings["vpn"].update({"config": "client\ndev tun\nremote-cert-tls server\nresolv-retry infinite\n", "endpoints": [{"id": str(uuid.uuid4()), "name": "坏端口", "host": "vpn.test", "port": 1195, "protocol": "udp"}, {"id": endpoint, "name": "可用 UDP", "host": "vpn.test", "port": 1194, "protocol": "udp"}], "selected_endpoint": endpoint, "dns_mode": "pushed", "httpdns_url": "http://httpdns.test:18080/resolve", "httpdns_ips": [address], "httpdns_protocol": "json", "ca": (directory / "ca.crt").read_text(), "cert": (directory / "client.crt").read_text(), "key": (directory / "client.key").read_text()})
+            settings["vpn"].update(
+                {
+                    "config": "client\ndev tun\nremote-cert-tls server\nresolv-retry infinite\n",
+                    "endpoints": [
+                        {
+                            "id": str(uuid.uuid4()),
+                            "name": "坏端口",
+                            "host": "vpn.test",
+                            "port": 1195,
+                            "protocol": "udp",
+                        },
+                        {
+                            "id": endpoint,
+                            "name": "可用 UDP",
+                            "host": "vpn.test",
+                            "port": 1194,
+                            "protocol": "udp",
+                        },
+                    ],
+                    "selected_endpoint": endpoint,
+                    "dns_mode": "pushed",
+                    "httpdns_url": "http://httpdns.test:18080/resolve",
+                    "httpdns_ips": [address],
+                    "httpdns_protocol": "json",
+                    "ca": (directory / "ca.crt").read_text(),
+                    "cert": (directory / "client.crt").read_text(),
+                    "key": (directory / "client.key").read_text(),
+                }
+            )
             settings["socks5"]["enabled"] = True
-            settings["sshd"].update({"enabled": True, "authorized_keys": (directory / "ssh_key.pub").read_text()})
+            settings["sshd"].update(
+                {"enabled": True, "authorized_keys": (directory / "ssh_key.pub").read_text()}
+            )
             api("/config", "PUT", document)
             api("/apply", "POST")
-            state = wait(lambda: (state if (state := api("/status"))["vpn"]["state"] == "CONNECTED" else None))
+            state = wait(
+                lambda: state if (state := api("/status"))["vpn"]["state"] == "CONNECTED" else None
+            )
             assert state["selected_endpoint"]["endpoint_id"] == endpoint
             assert len([item for item in state["endpoint_probes"] if item["ok"]]) == 1
             assert state["dns"]["pushed"] == ["10.77.0.1"]
             wait(lambda: proxy(1080, "socks5h"))
             proxy(8888, "http")
-            assert ssh(directory, command="test ! -r /config/config.yaml && test ! -r /config/secrets && test ! -w /config && printf ssh-ok") == "ssh-ok"
+            assert (
+                ssh(
+                    directory,
+                    command="test ! -r /config/config.yaml && test ! -r /config/secrets && test ! -w /config && printf ssh-ok",
+                )
+                == "ssh-ok"
+            )
             saved_yaml = container("cat", "/config/config.yaml").stdout
             assert "-----BEGIN" not in saved_yaml and "test-admin-password" not in saved_yaml
-            assert container("stat", "-c", "%a", "/config/config.yaml", "/config/secrets").stdout.split() == ["600", "700"]
-            secret_modes = container("sh", "-c", "stat -c '%a %U' /config/secrets/*").stdout.splitlines()
+            assert container(
+                "stat", "-c", "%a", "/config/config.yaml", "/config/secrets"
+            ).stdout.split() == ["600", "700"]
+            secret_modes = container(
+                "sh", "-c", "stat -c '%a %U' /config/secrets/*"
+            ).stdout.splitlines()
             assert secret_modes and all(mode == "600 root" for mode in secret_modes)
-            print("✓ 域名 HTTPDNS、真实 UDP 自动选点、下发 DNS、双代理、公钥 SSH、密钥权限", flush=True)
+            print(
+                "✓ 域名 HTTPDNS、真实 UDP 自动选点、下发 DNS、双代理、公钥 SSH、密钥权限",
+                flush=True,
+            )
 
             pid = next(item["pid"] for item in state["services"] if item["name"] == "openvpn")
             settings["vpn"].update({"dns_mode": "manual", "dns": ["10.77.0.1"]})
@@ -212,12 +401,24 @@ http.server.ThreadingHTTPServer(("0.0.0.0", 18080), Handler).serve_forever()
             api("/dns", "POST")
             state = api("/status")
             assert state["dns"]["source"] == "manual"
-            assert next(item["pid"] for item in state["services"] if item["name"] == "openvpn") == pid
+            assert (
+                next(item["pid"] for item in state["services"] if item["name"] == "openvpn") == pid
+            )
             results = api("/tools/dns", "POST", {"domain": "target.test"})
             assert any(item["ok"] and item["ip"] == address for item in results["httpdns"])
             assert any(item["ok"] for item in results["vpn_dns"])
             for kind in ["ping", "tcp", "http"]:
-                settings["health"].update({"enabled": True, "kind": kind, "target": "10.77.0.1", "port": 18080, "url": "http://10.77.0.1:18080/", "interval_secs": 5, "action": "none"})
+                settings["health"].update(
+                    {
+                        "enabled": True,
+                        "kind": kind,
+                        "target": "10.77.0.1",
+                        "port": 18080,
+                        "url": "http://10.77.0.1:18080/",
+                        "interval_secs": 5,
+                        "action": "none",
+                    }
+                )
                 api("/config", "PUT", document)
                 result = api("/health", "POST")
                 assert result["ok"], result
@@ -230,12 +431,17 @@ http.server.ThreadingHTTPServer(("0.0.0.0", 18080), Handler).serve_forever()
             previous_health = api("/status")["health"]["vpn"]
             assert not api("/health", "POST")["ok"], "错误状态码未标记失败"
             after_test = api("/status")["health"]["vpn"]
-            assert (after_test["state"], after_test["consecutive_failures"]) == (previous_health["state"], previous_health["consecutive_failures"]), "手动测试改变了周期健康状态"
+            assert (after_test["state"], after_test["consecutive_failures"]) == (
+                previous_health["state"],
+                previous_health["consecutive_failures"],
+            ), "手动测试改变了周期健康状态"
             container("supervisorctl", "-c", "/etc/supervisor/supervisord.conf", "start", "health")
             settings["health"]["expected_status"] = 200
             api("/config", "PUT", document)
             assert api("/health", "POST")["ok"]
-            print("✓ DNS 热更新不重启 VPN、全部 DNS 工具、Ping/TCP/HTTP 与 HEAD 健康检查", flush=True)
+            print(
+                "✓ DNS 热更新不重启 VPN、全部 DNS 工具、Ping/TCP/HTTP 与 HEAD 健康检查", flush=True
+            )
 
             assert api("/tools/ping", "POST", {"host": "10.77.0.1"})["ok"]
             assert api("/tools/tcping", "POST", {"host": "target.test", "port": 18080})["ok"]
@@ -243,32 +449,80 @@ http.server.ThreadingHTTPServer(("0.0.0.0", 18080), Handler).serve_forever()
             get = api("/tools/curl", "POST", {"url": "http://target.test:18080/", "method": "GET"})
             assert get["ok"] and get["status_code"] == 200 and get["stdout"] == "vpnweb-test-ok"
             assert "GET / HTTP" in get["stderr"] and "Content-Type" in get["stderr"]
-            head = api("/tools/curl", "POST", {"url": "http://target.test:18080/", "method": "HEAD"})
-            assert head["ok"] and "Content-Length: 1024" in head["stdout"] and "vpnweb-test-ok" not in head["stdout"]
-            image_result = api("/tools/curl", "POST", {"url": "http://target.test:18080/image.png", "method": "GET"})
-            assert image_result["content_type"] == "image/png" and base64.b64decode(image_result["image_base64"]).startswith(bytes.fromhex("89504e470d0a1a0a"))
-            for path, payload in [("curl", {"url": "file:///etc/passwd", "method": "GET"}), ("curl", {"url": "http://target.test", "method": "POST"}), ("tcping", {"host": "target.test", "port": 0})]:
+            head = api(
+                "/tools/curl", "POST", {"url": "http://target.test:18080/", "method": "HEAD"}
+            )
+            assert (
+                head["ok"]
+                and "Content-Length: 1024" in head["stdout"]
+                and "vpnweb-test-ok" not in head["stdout"]
+            )
+            image_result = api(
+                "/tools/curl",
+                "POST",
+                {"url": "http://target.test:18080/image.png", "method": "GET"},
+            )
+            assert image_result["content_type"] == "image/png" and base64.b64decode(
+                image_result["image_base64"]
+            ).startswith(bytes.fromhex("89504e470d0a1a0a"))
+            for path, payload in [
+                ("curl", {"url": "file:///etc/passwd", "method": "GET"}),
+                ("curl", {"url": "http://target.test", "method": "POST"}),
+                ("tcping", {"host": "target.test", "port": 0}),
+            ]:
                 try:
                     api(f"/tools/{path}", "POST", payload)
                     raise AssertionError("无效探测参数未被拒绝")
                 except RuntimeError:
                     pass
-            print("✓ Ping、TCPing 成功与失败、CURL GET/HEAD 详细日志、PNG 原始字节及输入边界", flush=True)
+            print(
+                "✓ Ping、TCPing 成功与失败、CURL GET/HEAD 详细日志、PNG 原始字节及输入边界",
+                flush=True,
+            )
 
             # 真实故障验证：默认三次失败重启 VPN，容器持续健康，其他服务保持运行。
             before = api("/status")
             old_pid = next(item["pid"] for item in before["services"] if item["name"] == "openvpn")
-            other_pids = {item["name"]: item["pid"] for item in before["services"] if item["name"] in ["backend", "http", "sshd"]}
-            settings["health"].update({"expected_status": 503, "interval_secs": 1, "timeout_secs": 1, "failure_threshold": 3, "action": "restart", "action_cooldown_secs": 60})
+            other_pids = {
+                item["name"]: item["pid"]
+                for item in before["services"]
+                if item["name"] in ["backend", "http", "sshd"]
+            }
+            settings["health"].update(
+                {
+                    "expected_status": 503,
+                    "interval_secs": 1,
+                    "timeout_secs": 1,
+                    "failure_threshold": 3,
+                    "action": "restart",
+                    "action_cooldown_secs": 60,
+                }
+            )
             api("/config", "PUT", document)
-            recovered = wait(lambda: (health if (health := api("/status")["health"])["vpn"]["last_action"] and health["vpn"]["last_action"]["state"] == "success" else None))
+            recovered = wait(
+                lambda: (
+                    health
+                    if (health := api("/status")["health"])["vpn"]["last_action"]
+                    and health["vpn"]["last_action"]["state"] == "success"
+                    else None
+                )
+            )
             assert recovered["container"]["healthy"] and healthz() == 200
             restarted = api("/status")
-            assert next(item["pid"] for item in restarted["services"] if item["name"] == "openvpn") != old_pid
-            assert {item["name"]: item["pid"] for item in restarted["services"] if item["name"] in other_pids} == other_pids
+            assert (
+                next(item["pid"] for item in restarted["services"] if item["name"] == "openvpn")
+                != old_pid
+            )
+            assert {
+                item["name"]: item["pid"]
+                for item in restarted["services"]
+                if item["name"] in other_pids
+            } == other_pids
             attempt = recovered["vpn"]["last_action"]["attempted_at"]
             wait(lambda: api("/status")["health"]["vpn"]["consecutive_failures"] >= 6)
-            assert api("/status")["health"]["vpn"]["last_action"]["attempted_at"] == attempt, "冷却期间重复执行动作"
+            assert api("/status")["health"]["vpn"]["last_action"]["attempted_at"] == attempt, (
+                "冷却期间重复执行动作"
+            )
             api("/services/openvpn/stop", "POST")
             time.sleep(4)
             stopped = api("/status")["health"]
@@ -279,9 +533,25 @@ http.server.ThreadingHTTPServer(("0.0.0.0", 18080), Handler).serve_forever()
             api("/services/openvpn/start", "POST")
             wait(lambda: api("/status")["vpn"]["state"] == "CONNECTED")
             for action in ["reconnect", "reapply"]:
-                settings["health"].update({"expected_status": 503, "failure_threshold": 1, "action": action, "action_cooldown_secs": 4})
+                settings["health"].update(
+                    {
+                        "expected_status": 503,
+                        "failure_threshold": 1,
+                        "action": action,
+                        "action_cooldown_secs": 4,
+                    }
+                )
                 api("/config", "PUT", document)
-                wait(lambda: (last if (last := api("/status")["health"]["vpn"]["last_action"]) and last["action"] == action and last["state"] == "success" else None), timeout=90)
+                wait(
+                    lambda action=action: (
+                        last
+                        if (last := api("/status")["health"]["vpn"]["last_action"])
+                        and last["action"] == action
+                        and last["state"] == "success"
+                        else None
+                    ),
+                    timeout=90,
+                )
                 settings["health"].update({"expected_status": 200, "action": "none"})
                 api("/config", "PUT", document)
                 wait(lambda: api("/status")["vpn"]["state"] == "CONNECTED")
@@ -289,13 +559,28 @@ http.server.ThreadingHTTPServer(("0.0.0.0", 18080), Handler).serve_forever()
             api("/config", "PUT", document)
             wait(lambda: api("/status")["health"]["vpn"]["state"] == "unhealthy")
             assert healthz() == 200, "VPN 网络异常影响了容器健康"
-            settings["health"].update({"expected_status": 200, "failure_threshold": 3, "action": "restart", "action_cooldown_secs": 120, "interval_secs": 5, "timeout_secs": 5})
+            settings["health"].update(
+                {
+                    "expected_status": 200,
+                    "failure_threshold": 3,
+                    "action": "restart",
+                    "action_cooldown_secs": 120,
+                    "interval_secs": 5,
+                    "timeout_secs": 5,
+                }
+            )
             api("/config", "PUT", document)
             wait(lambda: api("/status")["health"]["vpn"]["healthy"])
-            print("✓ 默认三次失败恢复、可调阈值、冷却、软重连、重新应用配置、手动停止保护", flush=True)
+            print(
+                "✓ 默认三次失败恢复、可调阈值、冷却、软重连、重新应用配置、手动停止保护", flush=True
+            )
 
-            settings["http"].update({"authentication": "password", "username": "httpuser", "password": "http-password"})
-            settings["socks5"].update({"authentication": "password", "username": "sockuser", "password": "socks-password"})
+            settings["http"].update(
+                {"authentication": "password", "username": "httpuser", "password": "http-password"}
+            )
+            settings["socks5"].update(
+                {"authentication": "password", "username": "sockuser", "password": "socks-password"}
+            )
             settings["sshd"]["password"] = "ssh-test-password"
             api("/config", "PUT", document)
             for service in ["http", "socks5", "sshd"]:
@@ -315,11 +600,32 @@ http.server.ThreadingHTTPServer(("0.0.0.0", 18080), Handler).serve_forever()
             second = next(item for item in document["profiles"] if item["id"] == second_id)
             second["settings"] = copy.deepcopy(settings)
             second_settings = second["settings"]
-            second_settings["http"].update({"authentication": "none", "username": "", "password": ""})
+            second_settings["http"].update(
+                {"authentication": "none", "username": "", "password": ""}
+            )
             second_settings["vpn"]["selection_mode"] = "manual"
             second_settings["vpn"]["selected_endpoint"] = endpoint
             api("/config", "PUT", document)
-            session = subprocess.Popen(["ssh", "-i", str(directory / "ssh_key"), "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "BatchMode=yes", "-p", host_port(22), "work@127.0.0.1", "echo session-ready; exec sleep 600"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+            session = subprocess.Popen(
+                [
+                    "ssh",
+                    "-i",
+                    str(directory / "ssh_key"),
+                    "-o",
+                    "StrictHostKeyChecking=no",
+                    "-o",
+                    "UserKnownHostsFile=/dev/null",
+                    "-o",
+                    "BatchMode=yes",
+                    "-p",
+                    host_port(22),
+                    "work@127.0.0.1",
+                    "echo session-ready; exec sleep 600",
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
             assert session.stdout.readline().strip() == "session-ready"
             api(f"/profiles/{second_id}/activate", "POST")
             assert session.wait(timeout=10) != 0, "切换配置后旧 SSH 会话仍在运行"
@@ -328,12 +634,21 @@ http.server.ThreadingHTTPServer(("0.0.0.0", 18080), Handler).serve_forever()
             wait(lambda: proxy(1080, "socks5h", "sockuser:socks-password"))
             state = api("/status")
             assert state["active_profile"] == second_id
-            assert {item["port"] for item in state["ports"] if item["listening"]} == {80, 8888, 1080, 22}
+            assert {item["port"] for item in state["ports"] if item["listening"]} == {
+                80,
+                8888,
+                1080,
+                22,
+            }
             assert ssh(directory) == "ssh-ok"
             document = api("/config")
             assert document["profiles"][0]["settings"]["http"]["authentication"] == "password"
             assert "web" not in document
-            assert all("port" not in profile["settings"][service] for profile in document["profiles"] for service in ["http", "socks5", "sshd"])
+            assert all(
+                "port" not in profile["settings"][service]
+                for profile in document["profiles"]
+                for service in ["http", "socks5", "sshd"]
+            )
             for section in ["web", "http", "socks5", "sshd"]:
                 invalid = copy.deepcopy(document)
                 if section == "web":
@@ -345,15 +660,27 @@ http.server.ThreadingHTTPServer(("0.0.0.0", 18080), Handler).serve_forever()
                     raise RuntimeError("已移除的监听端口配置仍可写入")
                 except RuntimeError as error:
                     assert "配置格式错误" in str(error), error
-            backend_pid = next(item["pid"] for item in api("/status")["services"] if item["name"] == "backend")
+            backend_pid = next(
+                item["pid"] for item in api("/status")["services"] if item["name"] == "backend"
+            )
             api("/services/backend/restart", "POST")
-            wait(lambda: any(item["name"] == "backend" and item["state"] == "RUNNING" and item["pid"] != backend_pid for item in api("/status")["services"]))
+            wait(
+                lambda: any(
+                    item["name"] == "backend"
+                    and item["state"] == "RUNNING"
+                    and item["pid"] != backend_pid
+                    for item in api("/status")["services"]
+                )
+            )
             api("/services/openvpn/stop", "POST")
             verify_blocked(address)
             proxy(8888, "http", success=False)
             proxy(1080, "socks5h", "sockuser:socks-password", success=False)
             assert ssh(directory, command="printf management-ok") == "management-ok"
-            print("✓ 固定容器端口、宿主机随机映射、配置认证隔离、拒绝端口修改、管理服务重启及断线保护", flush=True)
+            print(
+                "✓ 固定容器端口、宿主机随机映射、配置认证隔离、拒绝端口修改、管理服务重启及断线保护",
+                flush=True,
+            )
 
             run("docker", "restart", client)
             wait(lambda: api("/status")["vpn"]["state"] == "CONNECTED")
@@ -364,7 +691,17 @@ http.server.ThreadingHTTPServer(("0.0.0.0", 18080), Handler).serve_forever()
         for name in [client, server]:
             result = run("docker", "logs", "--tail", "60", name, check=False)
             print(result.stdout + result.stderr)
-        print(run("docker", "exec", client, "sh", "-c", "tail -n 50 /config/logs/*.log /run/vpnweb/probe-*.log", check=False).stdout)
+        print(
+            run(
+                "docker",
+                "exec",
+                client,
+                "sh",
+                "-c",
+                "tail -n 50 /config/logs/*.log /run/vpnweb/probe-*.log",
+                check=False,
+            ).stdout
+        )
         raise
     finally:
         run("docker", "rm", "-f", "-v", client, server, check=False)
