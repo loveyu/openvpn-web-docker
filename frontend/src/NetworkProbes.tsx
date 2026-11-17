@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Globe2, Network } from "lucide-react";
 import { request } from "./api";
+import { useToolPreference } from "./useToolPreference";
 
 interface ProbeResult {
   target: string;
@@ -75,10 +76,13 @@ function ProbeOutput({ result }: { result?: ProbeResult }) {
 }
 
 export function NetworkProbes({ tool }: { tool: "tcping" | "curl" }) {
-  const [tcpHost, setTcpHost] = useState("example.com");
-  const [tcpPort, setTcpPort] = useState(443);
-  const [url, setUrl] = useState("https://example.com");
-  const [method, setMethod] = useState<"GET" | "HEAD">("GET");
+  const [tcpHost, setTcpHost] = useToolPreference<string>("tcping-host", "example.com");
+  const [tcpPort, setTcpPort] = useToolPreference<number>("tcping-port", 443);
+  const [url, setUrl] = useToolPreference<string>("curl-url", "https://example.com");
+  const [method, setMethod] = useToolPreference<"GET" | "HEAD">("curl-method", "GET", [
+    "GET",
+    "HEAD",
+  ]);
   const [tcpResult, setTcpResult] = useState<ProbeResult>();
   const [curlResult, setCurlResult] = useState<ProbeResult>();
   const [pending, setPending] = useState<string>();

@@ -14,6 +14,7 @@ import { request } from "./api";
 import { LogOutput } from "./LogOutput";
 import { NetworkProbes } from "./NetworkProbes";
 import { TraceProbe } from "./TraceProbe";
+import { useToolPreference } from "./useToolPreference";
 import {
   Activity,
   ArrowDownToLine,
@@ -342,7 +343,7 @@ function App({ tab }: { tab: Tab }) {
   // 部署配置不是登录表单，仅在获焦时开放编辑，避免浏览器回填管理凭据。
   const [sshCredentialFocus, setSshCredentialFocus] = useState<"username" | "password">();
   const [newProfileName, setNewProfileName] = useState("");
-  const [dnsDomain, setDnsDomain] = useState("example.com");
+  const [dnsDomain, setDnsDomain] = useToolPreference<string>("dns-domain", "example.com");
   const [dnsResults, setDnsResults] = useState<DnsResults>();
   const [status, setStatus] = useState<Status>();
   const [healthTest, setHealthTest] = useState<VpnHealth>();
@@ -1948,7 +1949,10 @@ function App({ tab }: { tab: Tab }) {
               {tab === "tools" && (
                 <>
                   {requestedTool && !selectedTool && <Navigate to="/tools" replace />}
-                  <Panel title="选择网络工具" description="选择要使用的工具，开始诊断容器网络。">
+                  <Panel
+                    title="选择网络工具"
+                    description="选择工具诊断容器网络，表单参数自动保存在当前浏览器，便于下次复用。"
+                  >
                     <div className="panel-body">
                       <Field label="网络工具">
                         <select

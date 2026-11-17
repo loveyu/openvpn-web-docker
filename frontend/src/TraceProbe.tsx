@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Network, Pause, Play, Square } from "lucide-react";
+import { useToolPreference } from "./useToolPreference";
 
 type TraceTool = "ping" | "mtr" | "traceroute";
 interface Snapshot {
@@ -98,7 +99,7 @@ function MtrTable({ output }: { output: string }) {
 
 export function TraceProbe({ tool }: { tool: TraceTool }) {
   const name = tool === "ping" ? "Ping" : tool === "mtr" ? "MTR" : "Traceroute";
-  const [host, setHost] = useState("1.1.1.1");
+  const [host, setHost] = useToolPreference<string>(`${tool}-host`, "1.1.1.1");
   const [phase, setPhase] = useState<
     "idle" | "connecting" | "running" | "done" | "stopped" | "error"
   >("idle");
