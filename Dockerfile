@@ -54,8 +54,8 @@ COPY --from=frontend /build/frontend/dist/ /app/frontend/
 COPY docker/http-run.sh /usr/local/lib/vpnweb/http-run.sh
 COPY docker/supervisord.conf /etc/supervisor/supervisord.conf
 COPY --chmod=755 docker/entrypoint.sh /usr/local/bin/vpnweb-entrypoint
-EXPOSE 8080 8888 1080 2222
+EXPOSE 80 8888 1080 22
 VOLUME ["/config"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD port="$(cat /run/vpnweb/web-port)" && curl --fail --silent --max-time 3 "http://127.0.0.1:$port/healthz"
+    CMD curl --fail --silent --max-time 3 http://127.0.0.1/healthz
 ENTRYPOINT ["/usr/local/bin/vpnweb-entrypoint"]

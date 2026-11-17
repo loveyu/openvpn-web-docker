@@ -1,11 +1,14 @@
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, net::Ipv4Addr};
 
+pub const WEB_PORT: u16 = 80;
+pub const HTTP_PORT: u16 = 8888;
+pub const SOCKS5_PORT: u16 = 1080;
+pub const SSH_PORT: u16 = 22;
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
-    #[serde(skip)]
-    pub web: Web,
     pub vpn: Vpn,
     pub http: Proxy,
     pub socks5: Socks,
@@ -16,7 +19,6 @@ pub struct Config {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ConfigDocument {
-    pub web: Web,
     pub active_profile: String,
     pub profiles: Vec<Profile>,
 }
@@ -43,7 +45,6 @@ impl Default for ConfigDocument {
     fn default() -> Self {
         let profile = Profile::default();
         Self {
-            web: Web::default(),
             active_profile: profile.id.clone(),
             profiles: vec![profile],
         }
@@ -60,26 +61,12 @@ impl ConfigDocument {
             {
                 return Err("VPN 配置的 ID 必须唯一且有效，名称不能为空".into());
             }
-            let mut settings = profile.settings.clone();
-            settings.web = self.web.clone();
-            settings.validate()?;
+            profile.settings.validate()?;
         }
         if !ids.contains(&self.active_profile) {
             return Err("请选择有效的 VPN 配置".into());
         }
         Ok(())
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct Web {
-    pub port: u16,
-}
-
-impl Default for Web {
-    fn default() -> Self {
-        Self { port: 8080 }
     }
 }
 
@@ -238,7 +225,6 @@ pub enum DnsMode {
 #[serde(default, deny_unknown_fields)]
 pub struct Proxy {
     pub enabled: bool,
-    pub port: u16,
     pub username: String,
     pub password: String,
     pub authentication: Authentication,
@@ -248,7 +234,6 @@ impl Default for Proxy {
     fn default() -> Self {
         Self {
             enabled: true,
-            port: 8888,
             username: String::new(),
             password: String::new(),
             authentication: Authentication::None,
@@ -260,7 +245,6 @@ impl Default for Proxy {
 #[serde(default, deny_unknown_fields)]
 pub struct Socks {
     pub enabled: bool,
-    pub port: u16,
     pub username: String,
     pub password: String,
     pub authentication: Authentication,
@@ -270,7 +254,6 @@ impl Default for Socks {
     fn default() -> Self {
         Self {
             enabled: false,
-            port: 1080,
             username: String::new(),
             password: String::new(),
             authentication: Authentication::None,
@@ -290,7 +273,6 @@ pub enum Authentication {
 #[serde(default, deny_unknown_fields)]
 pub struct Ssh {
     pub enabled: bool,
-    pub port: u16,
     pub username: String,
     pub password: String,
     pub authorized_keys: String,
@@ -301,7 +283,6 @@ impl Default for Ssh {
     fn default() -> Self {
         Self {
             enabled: false,
-            port: 2222,
             username: "work".into(),
             password: String::new(),
             authorized_keys: String::new(),
@@ -373,17 +354,6 @@ impl Config {
         }
         if !self.vpn.endpoints.is_empty() && !endpoint_ids.contains(&self.vpn.selected_endpoint) {
             return Err("请选择一个有效的 OpenVPN endpoint".into());
-        }
-        let mut ports = HashSet::new();
-        for (name, port) in [
-            ("管理页面", self.web.port),
-            ("HTTP", self.http.port),
-            ("SOCKS5", self.socks5.port),
-            ("SSH", self.sshd.port),
-        ] {
-            if port == 0 || !ports.insert(port) {
-                return Err(format!("{name} 端口必须为 1–65535，且各服务端口不能重复"));
-            }
         }
         for (name, username) in [
             ("HTTP", &self.http.username),
@@ -471,11 +441,8 @@ mod tests {
         assert!(!config.sshd.enabled && !config.socks5.enabled);
     }
     #[test]
-    fn rejects_port_collisions_and_missing_authentication() {
+    fn rejects_missing_authentication() {
         let mut config = Config::default();
-        config.socks5.port = config.http.port;
-        assert!(config.validate().is_err());
-        config.socks5.port = 1080;
         config.sshd.enabled = true;
         assert!(config.validate().is_err());
         config.sshd.authorized_keys = "ssh-ed25519 AAAA test".into();

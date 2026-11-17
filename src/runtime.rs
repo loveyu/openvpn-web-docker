@@ -1,5 +1,7 @@
 use crate::{
-    config::{self, Config, DnsMode, Protocol, SelectionMode, Web},
+    config::{
+        self, Config, DnsMode, HTTP_PORT, Protocol, SOCKS5_PORT, SSH_PORT, SelectionMode, WEB_PORT,
+    },
     network::{self, Result},
     storage,
 };
@@ -26,7 +28,6 @@ mod health;
 struct Active {
     id: String,
     name: String,
-    web: Web,
     settings: Config,
 }
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq, Hash)]
@@ -53,7 +54,6 @@ impl Runtime {
         Ok(Active {
             id: profile.id,
             name: profile.name,
-            web: document.web,
             settings: profile.settings,
         })
     }
@@ -445,28 +445,12 @@ async fn firewall(rt: &Runtime, config: &Active, endpoints: &[Remote]) -> Result
         rt.json("network.json", &info)?;
         info
     };
-    let mut ports = vec![config.web.port];
-    if let Ok(port) = fs::read_to_string(rt.run.join("web-port")) {
-        ports.push(port.parse()?)
-    }
-    for (name, enabled, port) in [
-        (
-            "http",
-            config.settings.http.enabled,
-            config.settings.http.port,
-        ),
-        (
-            "socks5",
-            config.settings.socks5.enabled,
-            config.settings.socks5.port,
-        ),
-        (
-            "sshd",
-            config.settings.sshd.enabled,
-            config.settings.sshd.port,
-        ),
+    let mut ports = vec![WEB_PORT];
+    for (enabled, port) in [
+        (config.settings.http.enabled, HTTP_PORT),
+        (config.settings.socks5.enabled, SOCKS5_PORT),
+        (config.settings.sshd.enabled, SSH_PORT),
     ] {
-        let _ = name;
         if enabled {
             ports.push(port)
         }
@@ -940,7 +924,7 @@ async fn render_http(rt: &Runtime, config: &Active) -> Result<()> {
         String::new()
     };
     let file = rt.run.join("tinyproxy.conf");
-    rt.write(&file,format!("User tinyproxy\nGroup tinyproxy\nPort {}\nListen 0.0.0.0\nTimeout 600\nMaxClients 128\nLogLevel Info\nLogFile \"/run/tinyproxy/log.pipe\"\nPidFile \"/run/tinyproxy/tinyproxy.pid\"\nDisableViaHeader Yes\n{auth}\n",proxy.port).as_bytes())?;
+    rt.write(&file,format!("User tinyproxy\nGroup tinyproxy\nPort {}\nListen 0.0.0.0\nTimeout 600\nMaxClients 128\nLogLevel Info\nLogFile \"/run/tinyproxy/log.pipe\"\nPidFile \"/run/tinyproxy/tinyproxy.pid\"\nDisableViaHeader Yes\n{auth}\n",HTTP_PORT).as_bytes())?;
     network::command(
         "chown",
         &["root:tinyproxy".into(), file.display().to_string()],
@@ -1066,7 +1050,7 @@ async fn render_socks(rt: &Runtime, config: &Active) -> Result<()> {
     } else {
         String::new()
     };
-    rt.write(&rt.run.join("danted.conf"),format!("logoutput: stderr\ninternal: 0.0.0.0 port = {}\nexternal: tun0\nclientmethod: none\nsocksmethod: {method}\nuser.privileged: root\nuser.unprivileged: nobody\nclient pass {{\n from: 0.0.0.0/0 to: 0.0.0.0/0\n}}\nsocks pass {{\n from: 0.0.0.0/0 to: 0.0.0.0/0\n command: connect\n socksmethod: {method}\n {user}\n log: error\n}}\n",proxy.port).as_bytes())?;
+    rt.write(&rt.run.join("danted.conf"),format!("logoutput: stderr\ninternal: 0.0.0.0 port = {}\nexternal: tun0\nclientmethod: none\nsocksmethod: {method}\nuser.privileged: root\nuser.unprivileged: nobody\nclient pass {{\n from: 0.0.0.0/0 to: 0.0.0.0/0\n}}\nsocks pass {{\n from: 0.0.0.0/0 to: 0.0.0.0/0\n command: connect\n socksmethod: {method}\n {user}\n log: error\n}}\n",SOCKS5_PORT).as_bytes())?;
     Ok(())
 }
 
@@ -1122,7 +1106,7 @@ async fn render_ssh(rt: &Runtime, config: &Active) -> Result<()> {
         fs::remove_file(sudoers)?;
     }
     let path = rt.run.join("sshd_config");
-    rt.write(&path,format!("Port {}\nListenAddress 0.0.0.0\nHostKey {}\nPidFile /run/sshd/vpnweb.pid\nPermitRootLogin no\nAllowUsers {}\nPasswordAuthentication {}\nPubkeyAuthentication yes\nAuthorizedKeysFile .ssh/authorized_keys\nKbdInteractiveAuthentication no\nUsePAM no\nAllowTcpForwarding yes\nGatewayPorts clientspecified\nPermitTunnel yes\nPrintMotd no\nSubsystem sftp internal-sftp\nLogLevel VERBOSE\n",ssh.port,hostkey.display(),ssh.username,if ssh.password.is_empty(){"no"}else{"yes"}).as_bytes())?;
+    rt.write(&path,format!("Port {}\nListenAddress 0.0.0.0\nHostKey {}\nPidFile /run/sshd/vpnweb.pid\nPermitRootLogin no\nAllowUsers {}\nPasswordAuthentication {}\nPubkeyAuthentication yes\nAuthorizedKeysFile .ssh/authorized_keys\nKbdInteractiveAuthentication no\nUsePAM no\nAllowTcpForwarding yes\nGatewayPorts clientspecified\nPermitTunnel yes\nPrintMotd no\nSubsystem sftp internal-sftp\nLogLevel VERBOSE\n",SSH_PORT,hostkey.display(),ssh.username,if ssh.password.is_empty(){"no"}else{"yes"}).as_bytes())?;
     network::command(
         "sshd",
         &args(&["-t", "-f", &path.display().to_string()]),
@@ -1226,7 +1210,6 @@ async fn apply(rt: &Runtime, service: &str, action: &str) -> Result<Value> {
         active.settings.health = saved.settings.health.clone();
         isolate(rt, &active).await?;
     }
-    active.web = saved.web;
     rt.json("applied.json", &active)?;
     if targets.contains(&"openvpn") {
         firewall(rt, &active, &endpoints).await?;
@@ -1268,7 +1251,7 @@ async fn apply(rt: &Runtime, service: &str, action: &str) -> Result<Value> {
             supervisor("start", Some(name)).await?;
         }
     }
-    Ok(json!({"message":"配置已应用；管理页面端口变更需单独重启管理服务"}))
+    Ok(json!({"message":"配置已应用"}))
 }
 
 async fn status(rt: &Runtime) -> Result<Value> {
@@ -1288,12 +1271,11 @@ async fn status(rt: &Runtime) -> Result<Value> {
                 .ok()
         })
         .collect::<HashSet<_>>();
-    let web = fs::read_to_string(rt.run.join("web-port"))?.parse::<u16>()?;
     let ports = [
-        ("backend", web),
-        ("http", active.settings.http.port),
-        ("socks5", active.settings.socks5.port),
-        ("sshd", active.settings.sshd.port),
+        ("backend", WEB_PORT),
+        ("http", HTTP_PORT),
+        ("socks5", SOCKS5_PORT),
+        ("sshd", SSH_PORT),
     ]
     .into_iter()
     .map(|(name, port)| json!({"name":name,"port":port,"listening":listening.contains(&port)}))
@@ -1364,7 +1346,7 @@ pub async fn dispatch(data: PathBuf, values: &[String]) -> Result<Value> {
             .unwrap_or_else(|_| "/run/vpnweb".into()),
     };
     let operation = values.first().map(String::as_str).ok_or("缺少运行时操作")?;
-    let _lock = if matches!(operation, "apply" | "bootstrap" | "web" | "dns") {
+    let _lock = if matches!(operation, "apply" | "bootstrap" | "dns") {
         let file = fs::OpenOptions::new()
             .create(true)
             .truncate(false)
@@ -1405,13 +1387,6 @@ pub async fn dispatch(data: PathBuf, values: &[String]) -> Result<Value> {
             .await
         }
         "status" => status(&rt).await,
-        "web" => {
-            let mut active = rt.active()?;
-            active.web = rt.saved()?.web;
-            firewall(&rt, &active, &rt.endpoints()?).await?;
-            rt.json("applied.json", &active)?;
-            Ok(json!({"message":"管理端口防火墙已更新"}))
-        }
         "dns" => {
             let mut active = rt.active()?;
             let saved = rt.saved()?;

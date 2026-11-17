@@ -52,7 +52,6 @@ type Tab =
   | "http"
   | "socks5"
   | "sshd"
-  | "ports"
   | "logs"
   | "health"
   | "tools";
@@ -67,8 +66,7 @@ const nav = [
   { id: "http", label: "HTTP 代理", icon: Globe2 },
   { id: "socks5", label: "SOCKS5 代理", icon: Network },
   { id: "sshd", label: "SSH 访问", icon: Terminal },
-  { id: "ports", label: "端口设置", icon: Settings2, group: "系统" },
-  { id: "health", label: "健康检查", icon: ShieldCheck },
+  { id: "health", label: "健康检查", icon: ShieldCheck, group: "系统" },
   { id: "tools", label: "网络工具", icon: Network },
   { id: "logs", label: "服务日志", icon: Activity },
 ] as const;
@@ -85,7 +83,6 @@ const descriptions: Record<Tab, string> = {
   http: "为浏览器与应用提供经过 VPN 隧道的 HTTP / HTTPS 代理。",
   socks5: "按需开启 SOCKS5 TCP 代理，支持无认证或用户名密码认证。",
   sshd: "按需启用安全终端和端口转发，支持密码与公钥登录。",
-  ports: "统一配置容器内监听端口，让每个服务各就其位。",
   logs: "查看各服务的近期输出，定位连接与配置问题。",
   health: "分别查看容器与 OpenVPN 健康状态，配置隧道探测与自动恢复。",
   tools: "用全部 HTTPDNS 与 VPN DNS 对比域名解析结果。",
@@ -312,10 +309,7 @@ function App() {
   const profile = documentConfig?.profiles.find(
     (item) => item.id === documentConfig.active_profile,
   );
-  const config: Config | undefined =
-    profile && documentConfig
-      ? { ...profile.settings, web: documentConfig.web }
-      : undefined;
+  const config = profile?.settings;
   const [newProfile, setNewProfile] = useState(false);
   const [newProfileName, setNewProfileName] = useState("");
   const [dnsDomain, setDnsDomain] = useState("example.com");
@@ -389,7 +383,6 @@ function App() {
   function update<K extends keyof Config>(section: K, value: Config[K]) {
     setDocumentConfig((current) => {
       if (!current) return current;
-      if (section === "web") return { ...current, web: value as Config["web"] };
       return {
         ...current,
         profiles: current.profiles.map((item) =>
@@ -732,9 +725,7 @@ function App() {
                         const port =
                           name === "openvpn"
                             ? "tun0"
-                            : name === "backend"
-                              ? `:${status?.web_port ?? config.web.port}`
-                              : `:${status?.ports.find((item) => item.name === name)?.port ?? config[name].port}`;
+                            : `:${status?.ports.find((item) => item.name === name)?.port ?? "—"}`;
                         return (
                           <div className="service-row" key={name}>
                             <div className="service-icon">
@@ -796,22 +787,18 @@ function App() {
                               >
                                 <RefreshCw size={15} />
                               </button>
-                              <button
-                                className="icon-button"
-                                title={`配置${names[name]}`}
-                                aria-label={`配置${names[name]}`}
-                                onClick={() =>
-                                  setTab(
-                                    name === "openvpn"
-                                      ? "vpn"
-                                      : name === "backend"
-                                        ? "ports"
-                                        : name,
-                                  )
-                                }
-                              >
-                                <Settings2 size={15} />
-                              </button>
+                              {name !== "backend" && (
+                                <button
+                                  className="icon-button"
+                                  title={`配置${names[name]}`}
+                                  aria-label={`配置${names[name]}`}
+                                  onClick={() =>
+                                    setTab(name === "openvpn" ? "vpn" : name)
+                                  }
+                                >
+                                  <Settings2 size={15} />
+                                </button>
+                              )}
                             </div>
                           </div>
                         );
@@ -820,16 +807,10 @@ function App() {
                   </Panel>
                   <Panel
                     title="当前监听端口"
-                    description="独立 bridge 网络，不支持 host 模式。以下为容器端口，宿主机映射以 Compose 为准。"
+                    description="容器端口固定为 Web 80、HTTP 8888、SOCKS5 1080、SSH 22；宿主机端口由 Docker 映射配置。"
                   >
                     <div className="port-grid">
                       {status?.ports.map((item) => {
-                        const pending =
-                          item.name === "backend"
-                            ? config.web.port
-                            : item.name === "openvpn"
-                              ? item.port
-                              : config[item.name].port;
                         return (
                           <div className="port-card" key={item.name}>
                             <span>{names[item.name]}</span>
@@ -838,7 +819,6 @@ function App() {
                               className={item.listening ? "mint" : "muted"}
                             >
                               {item.listening ? "正在监听" : "未监听"}
-                              {pending !== item.port && ` · 待应用 :${pending}`}
                             </small>
                           </div>
                         );
@@ -1529,8 +1509,8 @@ function App() {
                   title={tab === "http" ? "HTTP 代理配置" : "SOCKS5 代理配置"}
                   description={
                     tab === "http"
-                      ? "由 Tinyproxy 提供 HTTP 和 HTTPS CONNECT 代理"
-                      : "由 Dante 提供 TCP CONNECT 代理，等待 tun0 建立后开始监听"
+                      ? "由 Tinyproxy 提供 HTTP 和 HTTPS CONNECT 代理，容器端口固定为 8888"
+                      : "由 Dante 提供 TCP CONNECT 代理，容器端口固定为 1080，等待 tun0 建立后开始监听"
                   }
                 >
                   <div className="panel-body">
@@ -1543,24 +1523,6 @@ function App() {
                       }
                     />
                     <div className="form-grid">
-                      <Field
-                        label="监听端口"
-                        help="修改后请同步调整 Docker 端口映射。"
-                      >
-                        <input
-                          type="number"
-                          min={1}
-                          max={65535}
-                          value={config[tab].port}
-                          onChange={(event) =>
-                            update(tab, {
-                              ...config[tab],
-                              port: Number(event.target.value),
-                            })
-                          }
-                        />
-                      </Field>
-                      <div />
                       <AuthFields
                         key={tab}
                         value={config[tab]}
@@ -1581,7 +1543,7 @@ function App() {
               {tab === "sshd" && (
                 <Panel
                   title="SSH 服务配置"
-                  description="支持终端、SFTP、TCP 转发与 TUN 转发；默认关闭"
+                  description="支持终端、SFTP、TCP 转发与 TUN 转发；容器端口固定为 22，默认关闭"
                 >
                   <div className="panel-body">
                     <Toggle
@@ -1593,20 +1555,6 @@ function App() {
                       help="密码与公钥至少配置一种，也可同时启用"
                     />
                     <div className="form-grid">
-                      <Field label="监听端口">
-                        <input
-                          type="number"
-                          min={1}
-                          max={65535}
-                          value={config.sshd.port}
-                          onChange={(event) =>
-                            update("sshd", {
-                              ...config.sshd,
-                              port: Number(event.target.value),
-                            })
-                          }
-                        />
-                      </Field>
                       <Field label="登录用户名">
                         <input
                           autoComplete="off"
@@ -1667,76 +1615,6 @@ function App() {
                   </div>
                   {footer("sshd")}
                 </Panel>
-              )}
-              {tab === "ports" && (
-                <>
-                  <Panel
-                    title="容器监听端口"
-                    description="端口必须互不重复，范围为 1–65535"
-                  >
-                    <div className="panel-body form-grid">
-                      {(
-                        [
-                          ["web", "管理页面"],
-                          ["http", "HTTP 代理"],
-                          ["socks5", "SOCKS5 代理"],
-                          ["sshd", "SSH 访问"],
-                        ] as const
-                      ).map(([key, label]) => (
-                        <Field label={label} key={key}>
-                          <input
-                            type="number"
-                            min={1}
-                            max={65535}
-                            value={config[key].port}
-                            onChange={(event) =>
-                              update(key, {
-                                ...config[key],
-                                port: Number(event.target.value),
-                              })
-                            }
-                          />
-                        </Field>
-                      ))}
-                    </div>
-                    <div className="form-footer">
-                      <span>管理页面当前监听 :{status?.web_port}</span>
-                      <button
-                        className="button primary"
-                        disabled={busy}
-                        onClick={() =>
-                          void execute(async () => {
-                            await save();
-                            const result = await request<{ message: string }>(
-                              "/apply",
-                              { method: "POST" },
-                            );
-                            notify(result.message);
-                            await refresh();
-                          })
-                        }
-                      >
-                        <Check size={15} />
-                        保存并应用服务
-                      </button>
-                    </div>
-                  </Panel>
-                  <div className="note">
-                    <CircleHelp size={19} />
-                    <p>
-                      Docker 宿主机端口映射需在 Compose
-                      中同步修改并重新创建容器。管理页面端口在重启管理服务后生效，届时请访问新映射地址。
-                    </p>
-                  </div>
-                  <button
-                    className="button"
-                    disabled={busy}
-                    onClick={() => control("backend", "restart", true)}
-                  >
-                    <RefreshCw size={15} />
-                    保存并重启管理服务
-                  </button>
-                </>
               )}
               {tab === "health" && (
                 <>

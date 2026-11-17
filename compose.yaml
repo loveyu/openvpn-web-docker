@@ -12,10 +12,10 @@ services:
       net.ipv4.conf.all.src_valid_mark: "1"
       net.ipv4.conf.all.rp_filter: "2"
     ports:
-      - "${BIND_ADDRESS:-127.0.0.1}:${WEB_PORT:-18080}:8080/tcp"
+      - "${BIND_ADDRESS:-127.0.0.1}:${WEB_PORT:-18080}:80/tcp"
       - "${BIND_ADDRESS:-127.0.0.1}:${HTTP_PROXY_PORT:-17888}:8888/tcp"
       - "${BIND_ADDRESS:-127.0.0.1}:${SOCKS5_PORT:-17080}:1080/tcp"
-      - "${BIND_ADDRESS:-127.0.0.1}:${SSH_PORT:-17222}:2222/tcp"
+      - "${BIND_ADDRESS:-127.0.0.1}:${SSH_PORT:-17222}:22/tcp"
     volumes:
       - ./config:/config
     tmpfs:

@@ -12,7 +12,7 @@ use axum::{
     routing::{get, post},
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
-use config::{Config, ConfigDocument, Profile};
+use config::{Config, ConfigDocument, Profile, WEB_PORT};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{
@@ -29,7 +29,6 @@ struct App {
     authorization: Option<String>,
     data: PathBuf,
     lock: Mutex<()>,
-    port: u16,
 }
 
 struct ApiError(StatusCode, String);
@@ -195,7 +194,6 @@ async fn save_config(
 }
 async fn status(State(app): State<Arc<App>>) -> ApiResult<Json<Value>> {
     let mut value = runtime(&app, &["status"], None).await?;
-    value["web_port"] = json!(app.port);
     value["version"] = json!(env!("CARGO_PKG_VERSION"));
     value["basic_auth_enabled"] = json!(app.authorization.is_some());
     Ok(Json(value))
@@ -302,15 +300,12 @@ async fn control(
                 "管理服务只支持重启".into(),
             ));
         }
-        runtime(&app, &["web"], None).await?;
         tokio::spawn(async {
             tokio::time::sleep(Duration::from_millis(500)).await;
-            // Supervisor 负责重新拉起进程，并加载新的管理端口。
+            // Supervisor 负责重新拉起管理服务。
             std::process::exit(0);
         });
-        return Ok(Json(
-            json!({"message": "管理服务即将重启，请使用保存后的端口重新访问"}),
-        ));
+        return Ok(Json(json!({"message": "管理服务即将重启，请稍后刷新页面"})));
     }
     Ok(Json(
         runtime(&app, &["apply", &service, &action], None).await?,
@@ -400,12 +395,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if env::args().any(|arg| arg == "--init") {
         return Ok(());
     }
-    let run_dir = PathBuf::from(env::var("RUN_DIR").unwrap_or_else(|_| "/run/vpnweb".into()));
-    tokio::fs::write(run_dir.join("web-port"), config.web.port.to_string()).await?;
     let app = Arc::new(App {
         authorization,
         data,
-        port: config.web.port,
         lock: Mutex::new(()),
     });
     let api = Router::new()
@@ -434,8 +426,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(middleware::from_fn(security_headers))
         .with_state(app.clone());
     let listener =
-        tokio::net::TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, app.port)).await?;
-    tracing::info!(port = app.port, "管理服务已启动");
+        tokio::net::TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, WEB_PORT)).await?;
+    tracing::info!(port = WEB_PORT, "管理服务已启动");
     axum::serve(listener, router)
         .with_graceful_shutdown(async {
             let mut term =

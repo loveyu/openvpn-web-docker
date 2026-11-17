@@ -1,6 +1,6 @@
 # OpenVPN Web Docker
 
-一个容器替换 Gluetun、SOCKS5 和 OpenSSH 组合，提供 Rust 后端与 React 管理界面。管理 OpenVPN 连接、HTTP/SOCKS5 代理、可选 SSH、多套 VPN 配置、DNS、端口和服务日志。
+一个容器替换 Gluetun、SOCKS5 和 OpenSSH 组合，提供 Rust 后端与 React 管理界面。管理 OpenVPN 连接、HTTP/SOCKS5 代理、可选 SSH、多套 VPN 配置、DNS 和服务日志。
 
 自有 API、配置生成、网络探测、防火墙、DNS hook 和健康检查全部使用 Rust。Python 仅作为 Supervisor 及其 supervisorctl 的依赖；镜像没有自有 Python 应用。OpenVPN、Tinyproxy、Dante 和 OpenSSH 直接集成到镜像中。
 
@@ -19,24 +19,24 @@ docker compose up -d --build
 
 | 服务 | 默认状态 | 容器端口 | 默认宿主机端口 |
 | --- | --- | --- | --- |
-| 管理页面 / API | 开启，可选 Basic Auth | 8080 | 18080 |
+| 管理页面 / API | 开启，可选 Basic Auth | 80 | 18080 |
 | HTTP / HTTPS CONNECT | 开启，无认证 | 8888 | 17888 |
 | SOCKS5 TCP CONNECT | 关闭 | 1080 | 17080 |
-| SSH / SFTP / 转发 | 关闭 | 2222 | 17222 |
+| SSH / SFTP / 转发 | 关闭 | 22 | 17222 |
 
 Compose 默认绑定宿主机 `127.0.0.1`。局域网访问时设置 `.env` 的 `BIND_ADDRESS`；例如宿主机局域网 IP。管理 Basic Auth 通过 `ADMIN_USERNAME`、`ADMIN_PASSWORD` 环境变量设置，启用时必须同时设置两项，修改后重新创建容器。浏览器使用原生认证对话框，API 使用 `curl -u '用户名:密码'`。`/healthz` 不要求认证，返回健康状态，不包含配置或密钥。
 
 ## 配置和服务操作
 
-右上角可新增、切换 VPN 配置。每套配置独立保存 OpenVPN 参数、endpoint 列表与排序、DNS、代理/SSH 端口、认证和健康检查；全部放在同一个 YAML 中。管理页面端口与管理认证属于全局配置。**同一时间运行一套 VPN 配置**，切换会关闭旧 SSH 会话、停止旧服务并应用新配置；新增本身不会切换当前连接。
+右上角可新增、切换 VPN 配置。每套配置独立保存 OpenVPN 参数、endpoint 列表与排序、DNS、代理/SSH 认证和健康检查；全部放在同一个 YAML 中。管理认证通过容器环境变量配置。**同一时间运行一套 VPN 配置**，切换会关闭旧 SSH 会话、停止旧服务并应用新配置；新增本身不会切换当前连接。
 
 - **OpenVPN**：粘贴标准 `.ovpn` 原文或手动选项；CA、客户端证书、私钥、`tls-auth`、`tls-crypt` 使用多行文本框。内联证书会在保存时提取到独立文件。
 - **HTTP**：Tinyproxy，支持关闭、无认证、用户名密码认证；Tinyproxy 的密码不能包含空白字符。
 - **SOCKS5**：Dante，支持关闭、无认证、用户名密码认证；支持 TCP CONNECT，不提供 UDP ASSOCIATE。等待 VPN 网卡出现后监听。
 - **SSH**：OpenSSH，支持密码、公钥或同时启用。密码为空时关闭密码登录；公钥每行一个。支持 SFTP、TCP 转发、`GatewayPorts clientspecified`、TUN 转发。免密 sudo 默认关闭，开启后此用户具有容器 root 权限。
-- **管理和日志**：概览显示服务状态、当前监听端口和待应用端口，提供启动、停止、重启及配置入口。日志页可查看和下载近期输出。
+- **管理和日志**：概览显示服务状态和固定端口的监听状态，提供启动、停止、重启及配置入口。日志页可查看和下载近期输出。
 
-顶部“保存配置”只写磁盘；服务页“保存并重启”应用对应服务；端口页“保存并应用服务”应用 VPN 和全部代理/SSH。管理端口需单独重启管理服务。容器重新启动后按保存设置恢复服务；OpenVPN 另外受“启动时自动连接”控制。SOCKS5 与 SSH 的用户名不能相同。
+顶部“保存配置”只写磁盘；服务页“保存并重启”应用对应服务。容器重新启动后按保存设置恢复服务；OpenVPN 另外受“启动时自动连接”控制。SOCKS5 与 SSH 的用户名不能相同。
 
 ```bash
 curl -x http://127.0.0.1:17888 https://example.com
@@ -82,11 +82,11 @@ OpenVPN 连接及重连时由 Rust hook 收集 `dhcp-option DNS`。后台展示�
 
 每次动作后重新累计失败次数，并遵守冷却时间；最近动作、时间和结果显示在健康检查页。未配置 VPN、手动停止及配置切换期间不执行恢复。恢复动作只操作 OpenVPN，不重启容器或其他服务。Docker 的 `unhealthy` 标记本身不会触发 `restart: unless-stopped`。
 
-### 端口修改与 Docker 网络
+### 端口映射与 Docker 网络
 
-后台修改的是**容器监听端口**，`.env` 的 `WEB_PORT` 等修改的是**宿主机映射端口**。页面列出容器实际监听状态；Docker 的宿主机映射以 Compose 为准。
+容器监听端口固定为 Web `80`、HTTP 代理 `8888`、SOCKS5 `1080`、SSH `22`。后台不提供端口调整，所有 VPN 配置使用相同监听端口。
 
-例如 SOCKS5 容器端口改为 `1081`：后台保存该端口，把 `compose.yaml` 映射右侧改为 `1081`，随后执行 `docker compose up -d --force-recreate`。新容器从保存配置加载端口。不同 VPN profile 使用不同端口时，应提前在 Compose 中发布全部需要的端口。容器不能自行变更 Docker 的端口映射。
+宿主机端口由 Docker 映射决定。在 `.env` 设置 `WEB_PORT`、`HTTP_PROXY_PORT`、`SOCKS5_PORT`、`SSH_PORT`，或直接修改 `compose.yaml` 映射左侧；右侧保持容器固定端口。例如 Web 使用 `18080:80`，SSH 使用 `17222:22`。调整映射后执行 `docker compose up -d --force-recreate`。
 
 **不要设置 `network_mode: host`**。当前实现依赖独立网络命名空间、IPv4 默认网关、连接标记和策略路由；也不提供其他容器通过 IP 转发共享隧道的网关模式。
 
@@ -95,7 +95,7 @@ OpenVPN 连接及重连时由 Rust hook 收集 `dhcp-option DNS`。后台展示�
 只需挂载 `./config:/config`：
 
 ```text
-/config/config.yaml                         # 全部 profile 与全局配置，0600
+/config/config.yaml                         # 全部 profile 配置，0600
 /config/secrets/<UUID>                       # 证书和私钥原文，root:root 0600
 /config/logs/*.log                           # Supervisor 和各应用日志
 /config/.state/                             # 上次 endpoint、账户 UID 等运行记录
@@ -119,8 +119,6 @@ docker compose exec openvpn-web tail -n 100 /config/logs/openvpn.log
 首次启动自动生成完整默认值。建议通过界面编辑；需要手动改 YAML 时先停止容器，避免覆盖正在保存的内容。
 
 ```yaml
-web:
-  port: 8080
 active_profile: <profile-uuid>
 profiles:
   - id: <profile-uuid>
@@ -149,13 +147,10 @@ profiles:
         autoconnect: true
       http:
         enabled: true
-        port: 8888
       socks5:
         enabled: false
-        port: 1080
       sshd:
         enabled: false
-        port: 2222
       health:
         enabled: false
         failure_threshold: 3
@@ -209,4 +204,4 @@ python3 scripts/smoke.py --image openvpn-web:local
 docker compose config --quiet
 ```
 
-Python smoke 脚本仅在开发机/CI 运行，不复制进镜像。它创建独立 Docker bridge、临时 TLS VPN 服务端、DNS/HTTP 测试夹具和客户端，验证 UDP 自动选点、HTTPDNS、DNS 热更新、代理与 SSH 认证、密钥权限、多配置端口隔离、健康检查、服务重启、断线保护和持久化；结束后清理自己的容器和网络。需要宿主机 `openssl`、`ssh`、`curl`、Python 3 和 Docker。
+Python smoke 脚本仅在开发机/CI 运行，不复制进镜像。它创建独立 Docker bridge、临时 TLS VPN 服务端、DNS/HTTP 测试夹具和客户端，验证 UDP 自动选点、HTTPDNS、DNS 热更新、代理与 SSH 认证、密钥权限、固定容器端口和宿主机映射、多配置认证隔离、健康检查、服务重启、断线保护和持久化；结束后清理自己的容器和网络。需要宿主机 `openssl`、`ssh`、`curl`、Python 3 和 Docker。

@@ -326,7 +326,6 @@ mod tests {
         Active {
             id: "test-profile".into(),
             name: "测试".into(),
-            web: Web::default(),
             settings: Config::default(),
         }
     }

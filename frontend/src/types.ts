@@ -1,12 +1,10 @@
 export interface ProxyConfig {
   enabled: boolean;
-  port: number;
   username: string;
   password: string;
   authentication: "none" | "password";
 }
 export interface Config {
-  web: { port: number };
   vpn: {
     config: string;
     endpoints: {
@@ -58,10 +56,9 @@ export interface Config {
 export interface Profile {
   id: string;
   name: string;
-  settings: Omit<Config, "web">;
+  settings: Config;
 }
 export interface ConfigDocument {
-  web: Config["web"];
   active_profile: string;
   profiles: Profile[];
 }
@@ -85,7 +82,6 @@ export type Service = "openvpn" | "http" | "socks5" | "sshd" | "backend";
 export interface Status {
   services: { name: string; state: string; pid: number; description: string }[];
   vpn: { state: string; ip: string; detail?: string; since?: number };
-  web_port: number;
   version: string;
   kill_switch: boolean;
   basic_auth_enabled: boolean;

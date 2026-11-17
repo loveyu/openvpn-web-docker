@@ -36,9 +36,10 @@ def wait(work, timeout=60):
 
 
 def main(image):
+    exposed = json.loads(run("docker", "image", "inspect", "--format", "{{json .Config.ExposedPorts}}", image).stdout)
+    assert set(exposed) == {"80/tcp", "8888/tcp", "1080/tcp", "22/tcp"}, exposed
     identifier = "vpnweb-test-" + secrets.token_hex(4)
     server, client, network = identifier + "-server", identifier + "-client", identifier + "-net"
-    api_port = 8080
     authorization = "Basic " + base64.b64encode(b"admin:test-admin-password").decode()
 
     def host_port(port):
@@ -49,8 +50,8 @@ def main(image):
         if authorized:
             headers["Authorization"] = authorization
         if origin or method != "GET":
-            headers["Origin"] = origin or f"http://127.0.0.1:{host_port(api_port)}"
-        request = urllib.request.Request(f"http://127.0.0.1:{host_port(api_port)}/api{path}", data=json.dumps(data).encode() if data is not None else None, headers=headers, method=method)
+            headers["Origin"] = origin or f"http://127.0.0.1:{host_port(80)}"
+        request = urllib.request.Request(f"http://127.0.0.1:{host_port(80)}/api{path}", data=json.dumps(data).encode() if data is not None else None, headers=headers, method=method)
         try:
             with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=180) as response:
                 return json.load(response)
@@ -60,7 +61,7 @@ def main(image):
             raise
 
     def healthz():
-        request = urllib.request.Request(f"http://127.0.0.1:{host_port(api_port)}/healthz")
+        request = urllib.request.Request(f"http://127.0.0.1:{host_port(80)}/healthz")
         try:
             with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=5) as response:
                 return response.status
@@ -85,8 +86,8 @@ def main(image):
         result = container("curl", "--noproxy", "*", "--max-time", "2", f"http://{address}:18081/", check=False)
         assert result.returncode != 0, "出口保护失败：允许了隧道外直接连接"
 
-    def ssh(directory, port=2222, command="printf ssh-ok", password=False):
-        args = ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-p", host_port(port)]
+    def ssh(directory, command="printf ssh-ok", password=False):
+        args = ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-p", host_port(22)]
         if password:
             askpass = directory / "askpass"
             askpass.write_text("#!/bin/sh\necho ssh-test-password\n")
@@ -149,7 +150,7 @@ http.server.ThreadingHTTPServer(("0.0.0.0", 18080), Handler).serve_forever()
             address = run("docker", "inspect", "--format", f'{{{{(index .NetworkSettings.Networks "{network}").IPAddress}}}}', server).stdout.strip()
             run("docker", "exec", "-d", server, "python3", "/test/fixture.py", address)
             args = ["docker", "run", "-d", "--name", client, "--network", network, "--cap-add", "NET_ADMIN", "--device", "/dev/net/tun", "--sysctl", "net.ipv4.conf.all.src_valid_mark=1", "--sysctl", "net.ipv4.conf.all.rp_filter=2", "--tmpfs", "/run", "-e", "ADMIN_USERNAME=admin", "-e", "ADMIN_PASSWORD=test-admin-password"]
-            for port in [8080, 8081, 8888, 8889, 1080, 1081, 2222, 2223]:
+            for port in [80, 8888, 1080, 22]:
                 args += ["-p", f"127.0.0.1::{port}"]
             run(*args, image)
             document = wait(lambda: api("/config"))
@@ -281,47 +282,56 @@ http.server.ThreadingHTTPServer(("0.0.0.0", 18080), Handler).serve_forever()
             assert ssh(directory, password=True, command="printf password-ok") == "password-ok"
             print("✓ HTTP/SOCKS5 用户名密码认证、SSH 密码登录、独立服务重启", flush=True)
 
-            # 新配置复制同一测试 VPN，但端口与认证完全独立。
+            # 切换配置沿用固定监听端口，认证和 SSH 会话仍按配置隔离。
             created = api("/profiles", "POST", {"name": "独立测试配置"})
             second_id = created["id"]
             document = created["config"]
             second = next(item for item in document["profiles"] if item["id"] == second_id)
             second["settings"] = copy.deepcopy(settings)
             second_settings = second["settings"]
-            for service in ["http", "socks5", "sshd"]:
-                second_settings[service]["port"] += 1
             second_settings["http"].update({"authentication": "none", "username": "", "password": ""})
             second_settings["vpn"]["selection_mode"] = "manual"
             second_settings["vpn"]["selected_endpoint"] = endpoint
             api("/config", "PUT", document)
-            session = subprocess.Popen(["ssh", "-i", str(directory / "ssh_key"), "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "BatchMode=yes", "-p", host_port(2222), "work@127.0.0.1", "echo session-ready; exec sleep 600"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+            session = subprocess.Popen(["ssh", "-i", str(directory / "ssh_key"), "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "BatchMode=yes", "-p", host_port(22), "work@127.0.0.1", "echo session-ready; exec sleep 600"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
             assert session.stdout.readline().strip() == "session-ready"
             api(f"/profiles/{second_id}/activate", "POST")
             assert session.wait(timeout=10) != 0, "切换配置后旧 SSH 会话仍在运行"
             wait(lambda: api("/status")["vpn"]["state"] == "CONNECTED")
-            proxy(8889, "http")
-            wait(lambda: proxy(1081, "socks5h", "sockuser:socks-password"))
+            proxy(8888, "http")
+            wait(lambda: proxy(1080, "socks5h", "sockuser:socks-password"))
             state = api("/status")
             assert state["active_profile"] == second_id
-            assert not any(item["listening"] and item["port"] in [8888, 1080, 2222] for item in state["ports"])
-            assert ssh(directory, 2223) == "ssh-ok"
+            assert {item["port"] for item in state["ports"] if item["listening"]} == {80, 8888, 1080, 22}
+            assert ssh(directory) == "ssh-ok"
             document = api("/config")
-            assert document["profiles"][0]["settings"]["http"]["port"] == 8888
-            document["web"]["port"] = 8081
-            api("/config", "PUT", document)
+            assert document["profiles"][0]["settings"]["http"]["authentication"] == "password"
+            assert "web" not in document
+            assert all("port" not in profile["settings"][service] for profile in document["profiles"] for service in ["http", "socks5", "sshd"])
+            for section in ["web", "http", "socks5", "sshd"]:
+                invalid = copy.deepcopy(document)
+                if section == "web":
+                    invalid["web"] = {"port": 8081}
+                else:
+                    invalid["profiles"][0]["settings"][section]["port"] = 8081
+                try:
+                    api("/config", "PUT", invalid)
+                    raise RuntimeError("已移除的监听端口配置仍可写入")
+                except RuntimeError as error:
+                    assert "配置格式错误" in str(error), error
+            backend_pid = next(item["pid"] for item in api("/status")["services"] if item["name"] == "backend")
             api("/services/backend/restart", "POST")
-            api_port = 8081
-            wait(lambda: api("/status")["web_port"] == 8081)
+            wait(lambda: any(item["name"] == "backend" and item["state"] == "RUNNING" and item["pid"] != backend_pid for item in api("/status")["services"]))
             api("/services/openvpn/stop", "POST")
             verify_blocked(address)
-            proxy(8889, "http", success=False)
-            proxy(1081, "socks5h", "sockuser:socks-password", success=False)
-            assert ssh(directory, 2223, command="printf management-ok") == "management-ok"
-            print("✓ 多配置端口/认证隔离、端口修改、管理服务重启、断线保护及 SSH 回程", flush=True)
+            proxy(8888, "http", success=False)
+            proxy(1080, "socks5h", "sockuser:socks-password", success=False)
+            assert ssh(directory, command="printf management-ok") == "management-ok"
+            print("✓ 固定容器端口、宿主机随机映射、配置认证隔离、拒绝端口修改、管理服务重启及断线保护", flush=True)
 
             run("docker", "restart", client)
             wait(lambda: api("/status")["vpn"]["state"] == "CONNECTED")
-            wait(lambda: proxy(1081, "socks5h", "sockuser:socks-password"))
+            wait(lambda: proxy(1080, "socks5h", "sockuser:socks-password"))
             assert api("/config")["active_profile"] == second_id
             print("✓ 容器重启后 YAML 配置、密钥、认证与自动重连", flush=True)
     except Exception:
