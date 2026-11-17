@@ -1317,7 +1317,8 @@ async fn status(rt: &Runtime) -> Result<Value> {
     let active = rt.active()?;
     let (services, firewall) = tokio::try_join!(processes(), health::firewall_ready())?;
     let container_health = health::container_status(&services, firewall);
-    let vpn_health = health::vpn_status(rt).await?;
+    let vpn = vpn_state(rt).await;
+    let vpn_health = health::vpn_status(rt, &vpn).await?;
     let routes: Value = serde_json::from_str(
         &network::command(
             "ip",
@@ -1351,7 +1352,7 @@ async fn status(rt: &Runtime) -> Result<Value> {
     })
     .collect::<Vec<_>>();
     Ok(
-        json!({"services":services,"vpn":vpn_state(rt).await,"kill_switch":firewall,"ports":ports,"routes":routes,"dns":rt.read("dns.json",json!({"mode":active.settings.vpn.dns_mode,"pushed":[],"effective":[],"source":"none"}))?,"active_profile":active.id,"httpdns":rt.read("httpdns.json",json!({"state":"probing","results":[]}))?,"httpdns_presets":network::providers(),"endpoint_probes":rt.read("endpoint-probes.json",json!([]))?,"selected_endpoint":rt.read("selected-endpoint.json",Value::Null)?,"remote_endpoints":rt.endpoints()?,"health":{"container":container_health,"vpn":vpn_health}}),
+        json!({"services":services,"vpn":vpn,"kill_switch":firewall,"ports":ports,"routes":routes,"dns":rt.read("dns.json",json!({"mode":active.settings.vpn.dns_mode,"pushed":[],"effective":[],"source":"none"}))?,"active_profile":active.id,"httpdns":rt.read("httpdns.json",json!({"state":"probing","results":[]}))?,"httpdns_presets":network::providers(),"endpoint_probes":rt.read("endpoint-probes.json",json!([]))?,"selected_endpoint":rt.read("selected-endpoint.json",Value::Null)?,"remote_endpoints":rt.endpoints()?,"health":{"container":container_health,"vpn":vpn_health}}),
     )
 }
 

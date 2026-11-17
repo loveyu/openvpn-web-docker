@@ -48,7 +48,12 @@ fn identity(config: &Active) -> Value {
     json!({"profile_id":config.id,"settings":config.settings.health})
 }
 
-async fn observe(rt: &Runtime, config: &Active, probe: bool) -> Result<Value> {
+async fn observe(
+    rt: &Runtime,
+    config: &Active,
+    probe: bool,
+    connection: Option<&Value>,
+) -> Result<Value> {
     let active = rt.active()?;
     let mut result = json!({
         "identity":identity(config),"ok":false,"healthy":null,"state":"checking",
@@ -70,7 +75,10 @@ async fn observe(rt: &Runtime, config: &Active, probe: bool) -> Result<Value> {
                 result["ok"] = json!(true);
             }
             Some("RUNNING" | "STARTING") => {
-                let connection = vpn_state(rt).await;
+                let connection = match connection {
+                    Some(connection) => connection.clone(),
+                    None => vpn_state(rt).await,
+                };
                 result["connection_since"] = connection["since"].clone();
                 result["connection_ip"] = connection["ip"].clone();
                 if connection["state"] != "CONNECTED" {
@@ -175,9 +183,9 @@ fn summarize(mut live: Value, cached: &Value, config: &Active, now: u64) -> Valu
     live
 }
 
-pub(super) async fn vpn_status(rt: &Runtime) -> Result<Value> {
+pub(super) async fn vpn_status(rt: &Runtime, connection: &Value) -> Result<Value> {
     let config = rt.saved()?;
-    let live = observe(rt, &config, false).await?;
+    let live = observe(rt, &config, false, Some(connection)).await?;
     let cached = rt.read("health.json", json!({}))?;
     let mut result = summarize(live, &cached, &config, network::timestamp());
     let action = rt.read("health-action.json", Value::Null)?;
@@ -193,7 +201,7 @@ pub(super) async fn vpn_status(rt: &Runtime) -> Result<Value> {
 
 pub(super) async fn check(rt: &Runtime) -> Result<Value> {
     let config = rt.saved()?;
-    let mut result = observe(rt, &config, true).await?;
+    let mut result = observe(rt, &config, true, None).await?;
     if !idle(&result) {
         result["healthy"] = json!(result["ok"] == true);
     }
@@ -281,7 +289,7 @@ pub(super) async fn worker(rt: &Runtime) -> Result<Value> {
             previous = current;
         }
         if tokio::time::Instant::now() >= next {
-            let mut sample = observe(rt, &config, true).await?;
+            let mut sample = observe(rt, &config, true, None).await?;
             if sample["ok"] == true || idle(&sample) {
                 failures = 0;
                 action_failures = 0;

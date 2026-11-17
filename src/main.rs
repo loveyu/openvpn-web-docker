@@ -411,6 +411,64 @@ async fn control(
 struct LogQuery {
     lines: Option<usize>,
 }
+
+fn visible_log_lines<'a>(content: &'a str, service: &str, limit: usize) -> Vec<&'a str> {
+    content
+        .lines()
+        .rev()
+        .filter(|line| {
+            // 仅隐藏管理 socket 的例行状态轮询，保留其他管理事件及 VPN 诊断。
+            service != "openvpn"
+                || !line
+                    .split_once(" MANAGEMENT: ")
+                    .is_some_and(|(_, message)| {
+                        matches!(
+                            message,
+                            "Client connected from /run/vpnweb/openvpn-management.sock"
+                                | "CMD 'state'"
+                                | "Client disconnected"
+                        )
+                    })
+        })
+        .take(limit)
+        .collect()
+}
+
+async fn read_service_log(
+    path: &std::path::Path,
+    service: &str,
+    limit: usize,
+) -> std::io::Result<String> {
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+    let mut file = match tokio::fs::File::open(path).await {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
+        Err(error) => return Err(error),
+    };
+    let size = file.metadata().await?.len();
+    let mut window = 65536;
+    let mut bytes = Vec::new();
+    loop {
+        let start = size.saturating_sub(window);
+        file.seek(std::io::SeekFrom::Start(start)).await?;
+        bytes.clear();
+        file.read_to_end(&mut bytes).await?;
+        let content = String::from_utf8_lossy(&bytes);
+        // 从行边界开始过滤，避免把截断的轮询记录当成有效日志。
+        let content = if start > 0 {
+            content.split_once('\n').map_or("", |(_, rest)| rest)
+        } else {
+            &content
+        };
+        let lines = visible_log_lines(content, service, limit);
+        if start == 0 || lines.len() == limit {
+            return Ok(lines.into_iter().rev().collect::<Vec<_>>().join("\n"));
+        }
+        // 噪声不占行数；按倍数扩大尾部窗口，找回被轮询挤出的诊断信息。
+        window *= 2;
+    }
+}
+
 async fn logs(
     State(app): State<Arc<App>>,
     Path(service): Path<String>,
@@ -419,28 +477,10 @@ async fn logs(
     if !["openvpn", "http", "socks5", "sshd", "backend"].contains(&service.as_str()) {
         return Err(ApiError(StatusCode::BAD_REQUEST, "未知服务".into()));
     }
-    use tokio::io::{AsyncReadExt, AsyncSeekExt};
     let path = app.data.join("logs").join(format!("{service}.log"));
-    let content = match tokio::fs::File::open(path).await {
-        Ok(mut file) => {
-            let size = file.metadata().await?.len();
-            file.seek(std::io::SeekFrom::Start(size.saturating_sub(65536)))
-                .await?;
-            let mut bytes = Vec::new();
-            file.read_to_end(&mut bytes).await?;
-            String::from_utf8_lossy(&bytes).into_owned()
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(error) => return Err(error.into()),
-    };
-    let lines: Vec<_> = content
-        .lines()
-        .rev()
-        .take(query.lines.unwrap_or(200).clamp(1, 1000))
-        .collect();
-    Ok(Json(
-        json!({"service": service, "content": lines.into_iter().rev().collect::<Vec<_>>().join("\n")}),
-    ))
+    let content =
+        read_service_log(&path, &service, query.lines.unwrap_or(200).clamp(1, 1000)).await?;
+    Ok(Json(json!({"service": service, "content": content})))
 }
 
 #[tokio::main]
@@ -535,4 +575,54 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn openvpn_logs_hide_only_routine_management_polling() {
+        let messages = [
+            "Initialization Sequence Completed",
+            "MANAGEMENT: Client connected from /run/vpnweb/openvpn-management.sock",
+            "MANAGEMENT: CMD 'state'",
+            "MANAGEMENT: Client disconnected",
+            "MANAGEMENT: CMD 'signal SIGUSR1'",
+            "MANAGEMENT: Client connected from [AF_INET]127.0.0.1:1234",
+            "MANAGEMENT: Socket bind failed: Permission denied",
+            "TLS Error: TLS handshake failed",
+            "SIGUSR1[soft,tls-error] received, process restarting",
+        ];
+        let content = messages
+            .map(|message| format!("2026-11-17 18:16:58 {message}"))
+            .join("\n");
+        let lines = visible_log_lines(&content, "openvpn", 100);
+        assert_eq!(
+            lines.into_iter().rev().collect::<Vec<_>>(),
+            [0, 4, 5, 6, 7, 8].map(|i| format!("2026-11-17 18:16:58 {}", messages[i]))
+        );
+        assert_eq!(visible_log_lines(&content, "backend", 100).len(), 9);
+    }
+
+    #[tokio::test]
+    async fn openvpn_log_limit_counts_diagnostics_before_a_large_polling_tail() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("openvpn.log");
+        let noise = "2026-11-17 18:16:58 MANAGEMENT: Client connected from /run/vpnweb/openvpn-management.sock\n\
+                     2026-11-17 18:16:58 MANAGEMENT: CMD 'state'\n\
+                     2026-11-17 18:16:58 MANAGEMENT: Client disconnected\n";
+        let older = "2026-11-17 18:16:57 Initialization Sequence Completed";
+        let newer = "2026-11-17 18:17:03 TLS Error: TLS handshake failed";
+        fs::write(
+            &path,
+            format!("旧诊断\n{older}\n{}{newer}\n{noise}", noise.repeat(1024)),
+        )
+        .unwrap();
+        assert_eq!(
+            read_service_log(&path, "openvpn", 2).await.unwrap(),
+            format!("{older}\n{newer}")
+        );
+    }
 }
