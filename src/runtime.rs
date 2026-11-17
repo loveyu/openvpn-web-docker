@@ -20,6 +20,8 @@ use tokio::{
     task::JoinSet,
 };
 
+mod health;
+
 #[derive(Clone, Deserialize, Serialize)]
 struct Active {
     id: String,
@@ -99,7 +101,8 @@ async fn supervisor(action: &str, name: Option<&str>) -> Result<String> {
     if let Some(name) = name {
         values.push(name.into());
     }
-    let response = network::output("supervisorctl", &values, None, 40).await?;
+    let timeout = if action == "status" { 2 } else { 40 };
+    let response = network::output("supervisorctl", &values, None, timeout).await?;
     if !response.status.success() && action != "status" {
         return Err(format!(
             "Supervisor：{}{}",
@@ -1268,56 +1271,11 @@ async fn apply(rt: &Runtime, service: &str, action: &str) -> Result<Value> {
     Ok(json!({"message":"配置已应用；管理页面端口变更需单独重启管理服务"}))
 }
 
-async fn default_health(rt: &Runtime) -> Result<Value> {
-    let active = rt.active()?;
-    let services = processes().await?;
-    let mut errors = Vec::new();
-    for (name, required) in [
-        ("backend", true),
-        ("http", active.settings.http.enabled),
-        ("socks5", active.settings.socks5.enabled),
-        ("sshd", active.settings.sshd.enabled),
-    ] {
-        if required
-            && !services
-                .iter()
-                .any(|item| item["name"] == name && item["state"] == "RUNNING")
-        {
-            errors.push(format!("{name} 未运行"))
-        }
-    }
-    if active.settings.vpn.autoconnect
-        && (!active.settings.vpn.config.trim().is_empty()
-            || !active.settings.vpn.endpoints.is_empty())
-        && vpn_state(rt).await["state"] != "CONNECTED"
-    {
-        errors.push("OpenVPN 未连接".into())
-    }
-    if !network::output("nft", &args(&["list", "table", "inet", "vpnweb"]), None, 5)
-        .await?
-        .status
-        .success()
-    {
-        errors.push("出口防火墙未启用".into());
-    }
-    Ok(json!({"ok":errors.is_empty(),"errors":errors}))
-}
-async fn health_status(rt: &Runtime) -> Result<Value> {
-    let base = default_health(rt).await?;
-    let config = rt.saved()?;
-    let mut custom = rt.read("health.json", json!({}))?;
-    // 配置切换后，不能把上一套 VPN 的检查结果作为当前配置的结果。
-    if !config.settings.health.enabled {
-        custom = json!({"ok":true,"enabled":false,"healthy":true});
-    } else if custom["profile_id"] != config.id {
-        custom =
-            json!({"ok":false,"enabled":true,"healthy":false,"error":"等待当前配置的首次检查"});
-    }
-    Ok(json!({"healthy":base["ok"]==true&&custom["healthy"]!=false,"default":base,"custom":custom}))
-}
-
 async fn status(rt: &Runtime) -> Result<Value> {
     let active = rt.active()?;
+    let (services, firewall) = tokio::try_join!(processes(), health::firewall_ready())?;
+    let container_health = health::container_status(&services, firewall);
+    let vpn_health = health::vpn_status(rt).await?;
     let listing = network::command("ss", &args(&["-H", "-lnt"]), None).await?;
     let listening = listing
         .lines()
@@ -1340,12 +1298,8 @@ async fn status(rt: &Runtime) -> Result<Value> {
     .into_iter()
     .map(|(name, port)| json!({"name":name,"port":port,"listening":listening.contains(&port)}))
     .collect::<Vec<_>>();
-    let firewall = network::output("nft", &args(&["list", "table", "inet", "vpnweb"]), None, 5)
-        .await?
-        .status
-        .success();
     Ok(
-        json!({"services":processes().await?,"vpn":vpn_state(rt).await,"kill_switch":firewall,"ports":ports,"dns":rt.read("dns.json",json!({"mode":active.settings.vpn.dns_mode,"pushed":[],"effective":[],"source":"none"}))?,"active_profile":active.id,"httpdns":rt.read("httpdns.json",json!({"state":"probing","results":[]}))?,"httpdns_presets":network::providers(),"endpoint_probes":rt.read("endpoint-probes.json",json!([]))?,"selected_endpoint":rt.read("selected-endpoint.json",Value::Null)?,"remote_endpoints":rt.endpoints()?,"health":health_status(rt).await?}),
+        json!({"services":services,"vpn":vpn_state(rt).await,"kill_switch":firewall,"ports":ports,"dns":rt.read("dns.json",json!({"mode":active.settings.vpn.dns_mode,"pushed":[],"effective":[],"source":"none"}))?,"active_profile":active.id,"httpdns":rt.read("httpdns.json",json!({"state":"probing","results":[]}))?,"httpdns_presets":network::providers(),"endpoint_probes":rt.read("endpoint-probes.json",json!([]))?,"selected_endpoint":rt.read("selected-endpoint.json",Value::Null)?,"remote_endpoints":rt.endpoints()?,"health":{"container":container_health,"vpn":vpn_health}}),
     )
 }
 
@@ -1545,53 +1499,12 @@ pub async fn dispatch(data: PathBuf, values: &[String]) -> Result<Value> {
             }
             Ok(json!({"domain":domain,"httpdns":http,"vpn_dns":vpn}))
         }
-        "health-status" => health_status(&rt).await,
-        "health" => {
-            let config = rt.saved()?;
-            let mut result = if config.settings.health.enabled {
-                network::custom_health(&config.settings.health).await
-            } else {
-                json!({"ok":true,"enabled":false})
-            };
-            result["enabled"] = json!(config.settings.health.enabled);
-            result["profile_id"] = json!(config.id);
-            result["healthy"] = result["ok"].clone();
-            rt.json("health.json", &result)?;
-            health_status(&rt).await
+        "container-health" => {
+            let (services, firewall) = tokio::try_join!(processes(), health::firewall_ready())?;
+            Ok(health::container_status(&services, firewall))
         }
-        "health-worker" => {
-            let mut previous = String::new();
-            let mut failures = 0;
-            loop {
-                let config = rt.saved()?;
-                let identity = format!(
-                    "{}:{}",
-                    config.id,
-                    serde_json::to_string(&config.settings.health)?
-                );
-                if identity != previous {
-                    failures = 0;
-                    previous = identity
-                }
-                let mut result = if config.settings.health.enabled {
-                    network::custom_health(&config.settings.health).await
-                } else {
-                    json!({"ok":true})
-                };
-                if result["ok"] == true {
-                    failures = 0
-                } else {
-                    failures += 1
-                }
-                result["enabled"] = json!(config.settings.health.enabled);
-                result["profile_id"] = json!(config.id);
-                result["consecutive_failures"] = json!(failures);
-                result["healthy"] = json!(failures < config.settings.health.failure_threshold);
-                rt.json("health.json", &result)?;
-                println!("{result}");
-                tokio::time::sleep(Duration::from_secs(config.settings.health.interval_secs)).await;
-            }
-        }
+        "health" => health::check(&rt).await,
+        "health-worker" => health::worker(&rt).await,
         _ => Err("未知运行时操作".into()),
     }
 }

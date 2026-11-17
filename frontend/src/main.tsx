@@ -42,6 +42,7 @@ import type {
   ProxyConfig,
   Service,
   Status,
+  VpnHealth,
 } from "./types";
 import "./style.css";
 
@@ -86,8 +87,23 @@ const descriptions: Record<Tab, string> = {
   sshd: "按需启用安全终端和端口转发，支持密码与公钥登录。",
   ports: "统一配置容器内监听端口，让每个服务各就其位。",
   logs: "查看各服务的近期输出，定位连接与配置问题。",
-  health: "检查服务状态，并按需验证 Ping、TCP 或 HTTP 连接。",
+  health: "分别查看容器与 OpenVPN 健康状态，配置隧道探测与自动恢复。",
   tools: "用全部 HTTPDNS 与 VPN DNS 对比域名解析结果。",
+};
+
+const vpnHealthLabels: Record<VpnHealth["state"], string> = {
+  unconfigured: "未配置",
+  stopped: "已停止",
+  connecting: "连接中",
+  checking: "检测中",
+  healthy: "正常",
+  unhealthy: "异常",
+};
+const healthActionLabels: Record<Config["health"]["action"], string> = {
+  none: "仅记录",
+  reconnect: "软重连",
+  restart: "重启 OpenVPN 服务",
+  reapply: "重新应用 VPN 配置并重连",
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -305,6 +321,8 @@ function App() {
   const [dnsDomain, setDnsDomain] = useState("example.com");
   const [dnsResults, setDnsResults] = useState<DnsResults>();
   const [status, setStatus] = useState<Status>();
+  const [healthTest, setHealthTest] = useState<VpnHealth>();
+  useEffect(() => setHealthTest(undefined), [documentConfig?.active_profile]);
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ text: string; error?: boolean }>();
@@ -830,9 +848,15 @@ function App() {
                   <div className="note">
                     <ShieldCheck size={17} />
                     <p>
-                      健康状态：
-                      {status?.health.healthy ? "正常" : "待就绪 / 检查失败"}。
-                      {status?.health.default.errors.join("；")}
+                      容器健康：
+                      {status?.health.container.healthy
+                        ? "正常"
+                        : "待就绪 / 异常"}
+                      。 OpenVPN 健康：
+                      {status
+                        ? vpnHealthLabels[status.health.vpn.state]
+                        : "读取中"}
+                      。{status?.health.container.errors.join("；")}
                       <button
                         className="text-button"
                         onClick={() => setTab("health")}
@@ -853,6 +877,16 @@ function App() {
               )}
               {tab === "vpn" && (
                 <>
+                  <div className="note">
+                    <Activity size={17} />
+                    <p>
+                      OpenVPN 健康：
+                      {status
+                        ? vpnHealthLabels[status.health.vpn.state]
+                        : "读取中"}
+                      。{status?.health.vpn.errors.join("；")}
+                    </p>
+                  </div>
                   <Panel
                     title="Endpoint 连接选择"
                     description="默认 Auto 自动探测；支持域名与 IPv4。拖拽调整优先级，无延迟结果时按列表顺序选择。"
@@ -915,7 +949,8 @@ function App() {
                               update("vpn", {
                                 ...config.vpn,
                                 selection_mode: event.target.value as
-                                  "auto" | "manual",
+                                  | "auto"
+                                  | "manual",
                               })
                             }
                           >
@@ -1042,7 +1077,8 @@ function App() {
                                         ? {
                                             ...value,
                                             protocol: event.target.value as
-                                              "udp" | "tcp",
+                                              | "udp"
+                                              | "tcp",
                                           }
                                         : value,
                                   ),
@@ -1261,7 +1297,8 @@ function App() {
                               update("vpn", {
                                 ...config.vpn,
                                 dns_mode: event.target.value as
-                                  "manual" | "pushed",
+                                  | "manual"
+                                  | "pushed",
                               })
                             }
                           >
@@ -1387,7 +1424,8 @@ function App() {
                               update("vpn", {
                                 ...config.vpn,
                                 httpdns_protocol: event.target.value as
-                                  "doh" | "json",
+                                  | "doh"
+                                  | "json",
                               })
                             }
                           >
@@ -1703,53 +1741,144 @@ function App() {
               {tab === "health" && (
                 <>
                   <Panel
-                    title="默认状态检查"
-                    description="始终检查管理进程、防火墙，以及当前配置启用的服务和 VPN 隧道。"
+                    title="容器健康"
+                    description="Docker 使用 /healthz 检查管理服务、健康检查任务和出口防火墙，与 VPN 连接状态独立。"
                   >
                     <div className="panel-body">
                       <div className="health-status">
                         <span
-                          className={`health-dot ${status?.health.healthy ? "healthy" : ""}`}
+                          className={`health-dot ${status?.health.container.healthy ? "healthy" : ""}`}
                         />
                         <strong>
-                          {status?.health.healthy
-                            ? "当前实例健康"
+                          {status?.health.container.healthy
+                            ? "容器运行正常"
                             : "等待就绪或检查失败"}
                         </strong>
                       </div>
-                      {status?.health.default.errors.map((error) => (
+                      {status?.health.container.errors.map((error) => (
                         <p className="muted" key={error}>
                           {error}
                         </p>
                       ))}
-                      {status?.health.custom.enabled && (
+                    </div>
+                  </Panel>
+                  <Panel
+                    title="OpenVPN 健康"
+                    description="检查隧道连接与网络可用性；未配置或手动停止时不执行自动恢复。"
+                  >
+                    <div className="panel-body">
+                      <div className="health-status">
+                        <span
+                          className={`health-dot ${status?.health.vpn.healthy ? "healthy" : ""}`}
+                        />
+                        <strong>
+                          {status
+                            ? vpnHealthLabels[status.health.vpn.state]
+                            : "读取中"}
+                        </strong>
+                      </div>
+                      {status?.health.vpn.errors.map((error) => (
+                        <p className="muted" key={error}>
+                          {error}
+                        </p>
+                      ))}
+                      <p className="muted">
+                        连续失败 {status?.health.vpn.consecutive_failures ?? 0}{" "}
+                        次，达到 {config.health.failure_threshold} 次：
+                        {healthActionLabels[config.health.action]}。
+                      </p>
+                      {status?.health.vpn.probe.enabled && (
                         <p className="muted">
-                          自定义检查：
-                          {status.health.custom.ok ? "成功" : "失败"} · 连续失败{" "}
-                          {status.health.custom.consecutive_failures ?? 0} 次{" "}
-                          {typeof status.health.custom.latency_ms ===
+                          隧道网络探测：
+                          {status.health.vpn.probe.ok === undefined
+                            ? "等待结果"
+                            : status.health.vpn.probe.ok
+                              ? "成功"
+                              : "失败"}{" "}
+                          {typeof status.health.vpn.probe.latency_ms ===
                             "number" &&
-                            `· ${status.health.custom.latency_ms.toFixed(1)} ms`}
-                          {status.health.custom.error &&
-                            ` · ${status.health.custom.error}`}
+                            `· ${status.health.vpn.probe.latency_ms.toFixed(1)} ms`}
+                          {status.health.vpn.probe.error &&
+                            ` · ${status.health.vpn.probe.error}`}
+                        </p>
+                      )}
+                      {status?.health.vpn.last_action && (
+                        <p className="muted">
+                          最近恢复：
+                          {
+                            healthActionLabels[
+                              status.health.vpn.last_action.action
+                            ]
+                          }{" "}
+                          ·
+                          {status.health.vpn.last_action.state === "running"
+                            ? "执行中"
+                            : status.health.vpn.last_action.state === "success"
+                              ? "已执行"
+                              : "执行失败"}{" "}
+                          ·
+                          {new Date(
+                            status.health.vpn.last_action.attempted_at * 1000,
+                          ).toLocaleString()}
+                          {status.health.vpn.last_action.message &&
+                            ` · ${status.health.vpn.last_action.message}`}
                         </p>
                       )}
                     </div>
                   </Panel>
                   <Panel
-                    title="自定义网络检查"
-                    description="与默认检查一起决定 /healthz 状态；达到连续失败阈值后标记不健康。"
+                    title="VPN 探测与恢复策略"
+                    description="连接故障或隧道网络探测连续失败达到阈值后执行所选动作；默认失败 3 次重启 OpenVPN 服务。"
                   >
                     <div className="panel-body">
                       <Toggle
-                        label="启用自定义检查"
-                        help="检查通过当前容器网络执行；VPN 断开时出口保护继续生效。"
+                        label="启用隧道网络探测"
+                        help="Ping、TCP 和 HTTP 请求固定通过 tun0。关闭后仍检查 VPN 连接状态并按策略恢复。"
                         checked={config.health.enabled}
                         onChange={(enabled) =>
                           update("health", { ...config.health, enabled })
                         }
                       />
                       <div className="form-grid compact-grid">
+                        <Field label="不健康时的动作" wide>
+                          <select
+                            value={config.health.action}
+                            onChange={(event) =>
+                              update("health", {
+                                ...config.health,
+                                action: event.target
+                                  .value as Config["health"]["action"],
+                              })
+                            }
+                          >
+                            {Object.entries(healthActionLabels).map(
+                              ([value, label]) => (
+                                <option key={value} value={value}>
+                                  {label}
+                                </option>
+                              ),
+                            )}
+                          </select>
+                        </Field>
+                        <Field
+                          label="动作冷却时间（秒）"
+                          help="两次恢复动作的最短间隔，防止持续故障时频繁重连。"
+                        >
+                          <input
+                            type="number"
+                            min={1}
+                            max={86400}
+                            value={config.health.action_cooldown_secs}
+                            onChange={(event) =>
+                              update("health", {
+                                ...config.health,
+                                action_cooldown_secs: Number(
+                                  event.target.value,
+                                ),
+                              })
+                            }
+                          />
+                        </Field>
                         <Field label="检查方式">
                           <select
                             value={config.health.kind}
@@ -1787,7 +1916,8 @@ function App() {
                                   update("health", {
                                     ...config.health,
                                     http_method: event.target.value as
-                                      "GET" | "HEAD",
+                                      | "GET"
+                                      | "HEAD",
                                   })
                                 }
                               >
@@ -1881,16 +2011,23 @@ function App() {
                       </div>
                     </div>
                     <div className="form-footer">
-                      <span>默认参数已填充，后台自动定时检查</span>
+                      <span>手动测试只返回结果，不累计失败或触发恢复</span>
                       <button
                         className="button primary"
                         disabled={busy}
                         onClick={() =>
                           void execute(async () => {
                             await save();
-                            await request("/health", { method: "POST" });
+                            const result = await request<VpnHealth>("/health", {
+                              method: "POST",
+                            });
+                            setHealthTest(result);
                             await refresh();
-                            notify("已保存并完成健康检查");
+                            notify(
+                              result.ok
+                                ? "已保存，手动检查通过"
+                                : "已保存，手动检查未通过",
+                            );
                           })
                         }
                       >
@@ -1898,6 +2035,18 @@ function App() {
                         保存并立即检查
                       </button>
                     </div>
+                    {healthTest && (
+                      <div className="panel-body">
+                        <p className="muted">
+                          本次手动测试：{vpnHealthLabels[healthTest.state]}
+                          {healthTest.probe.enabled &&
+                          healthTest.probe.ok !== undefined
+                            ? ` · 隧道网络探测${healthTest.probe.ok ? "成功" : "失败"}`
+                            : ""}
+                          。{healthTest.errors.join("；")}
+                        </p>
+                      </div>
+                    )}
                   </Panel>
                 </>
               )}

@@ -269,8 +269,13 @@ async fn check_health(State(app): State<Arc<App>>) -> ApiResult<Json<Value>> {
 }
 
 async fn healthz(State(app): State<Arc<App>>) -> (StatusCode, Json<Value>) {
-    match runtime(&app, &["health-status"], None).await {
-        Ok(value) if value["healthy"] == true => (StatusCode::OK, Json(json!({"status":"ok"}))),
+    let result = tokio::time::timeout(
+        Duration::from_millis(2500),
+        runtime(&app, &["container-health"], None),
+    )
+    .await;
+    match result {
+        Ok(Ok(value)) if value["healthy"] == true => (StatusCode::OK, Json(json!({"status":"ok"}))),
         _ => (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(json!({"status":"unhealthy"})),

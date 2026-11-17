@@ -51,6 +51,8 @@ export interface Config {
     timeout_secs: number;
     failure_threshold: number;
     ping_count: number;
+    action: "none" | "reconnect" | "restart" | "reapply";
+    action_cooldown_secs: number;
   };
 }
 export interface Profile {
@@ -123,17 +125,37 @@ export interface Status {
     error?: string;
   }[];
   health: {
-    healthy: boolean;
-    default: { ok: boolean; errors: string[] };
-    custom: {
-      enabled?: boolean;
-      ok: boolean;
-      healthy?: boolean;
-      target?: string;
-      latency_ms?: number | null;
-      error?: string;
-      consecutive_failures?: number;
+    container: { healthy: boolean; errors: string[] };
+    vpn: VpnHealth & {
+      consecutive_failures: number;
+      last_action: {
+        action: Config["health"]["action"];
+        attempted_at: number;
+        state: "running" | "success" | "failed";
+        message?: string;
+      } | null;
     };
   };
   active_profile: string;
+}
+
+export interface VpnHealth {
+  state:
+    | "unconfigured"
+    | "stopped"
+    | "connecting"
+    | "checking"
+    | "healthy"
+    | "unhealthy";
+  ok: boolean;
+  healthy: boolean | null;
+  errors: string[];
+  probe: {
+    enabled: boolean;
+    ok?: boolean;
+    target?: string;
+    latency_ms?: number;
+    error?: string;
+    checked_at?: number;
+  };
 }

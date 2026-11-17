@@ -59,6 +59,14 @@ def main(image):
                 raise RuntimeError(error.read().decode()) from error
             raise
 
+    def healthz():
+        request = urllib.request.Request(f"http://127.0.0.1:{host_port(api_port)}/healthz")
+        try:
+            with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=5) as response:
+                return response.status
+        except urllib.error.HTTPError as error:
+            return error.code
+
     def container(*args, check=True):
         return run("docker", "exec", client, *args, check=check)
 
@@ -157,7 +165,16 @@ http.server.ThreadingHTTPServer(("0.0.0.0", 18080), Handler).serve_forever()
             except urllib.error.HTTPError as error:
                 assert error.code == 403
             verify_blocked(address)
-            print("✓ Basic 认证、默认服务、连接前出口保护", flush=True)
+            wait(lambda: healthz() == 200)
+            initial = api("/status")["health"]
+            assert initial["container"]["healthy"] and initial["vpn"]["state"] == "unconfigured"
+            defaults = document["profiles"][0]["settings"]["health"]
+            assert defaults["action"] == "restart" and defaults["failure_threshold"] == 3
+            container("supervisorctl", "-c", "/etc/supervisor/supervisord.conf", "stop", "health")
+            assert healthz() == 503, "健康检查任务停止后容器仍健康"
+            container("supervisorctl", "-c", "/etc/supervisor/supervisord.conf", "start", "health")
+            wait(lambda: healthz() == 200)
+            print("✓ Basic 认证、默认服务、连接前出口保护、容器与 VPN 健康分离", flush=True)
 
             settings = document["profiles"][0]["settings"]
             endpoint = str(uuid.uuid4())
@@ -191,20 +208,64 @@ http.server.ThreadingHTTPServer(("0.0.0.0", 18080), Handler).serve_forever()
             assert any(item["ok"] and item["ip"] == address for item in results["httpdns"])
             assert any(item["ok"] for item in results["vpn_dns"])
             for kind in ["ping", "tcp", "http"]:
-                settings["health"].update({"enabled": True, "kind": kind, "target": "10.77.0.1", "port": 18080, "url": "http://10.77.0.1:18080/", "interval_secs": 5})
+                settings["health"].update({"enabled": True, "kind": kind, "target": "10.77.0.1", "port": 18080, "url": "http://10.77.0.1:18080/", "interval_secs": 5, "action": "none"})
                 api("/config", "PUT", document)
                 result = api("/health", "POST")
-                assert result["healthy"], result
+                assert result["ok"], result
             settings["health"]["http_method"] = "HEAD"
             api("/config", "PUT", document)
-            assert api("/health", "POST")["healthy"], "HEAD 健康检查失败"
+            assert api("/health", "POST")["ok"], "HEAD 健康检查失败"
             settings["health"].update({"http_method": "GET", "expected_status": 503})
             api("/config", "PUT", document)
-            assert not api("/health", "POST")["healthy"], "错误状态码未标记失败"
+            container("supervisorctl", "-c", "/etc/supervisor/supervisord.conf", "stop", "health")
+            previous_health = api("/status")["health"]["vpn"]
+            assert not api("/health", "POST")["ok"], "错误状态码未标记失败"
+            after_test = api("/status")["health"]["vpn"]
+            assert (after_test["state"], after_test["consecutive_failures"]) == (previous_health["state"], previous_health["consecutive_failures"]), "手动测试改变了周期健康状态"
+            container("supervisorctl", "-c", "/etc/supervisor/supervisord.conf", "start", "health")
             settings["health"]["expected_status"] = 200
             api("/config", "PUT", document)
-            assert api("/health", "POST")["healthy"]
+            assert api("/health", "POST")["ok"]
             print("✓ DNS 热更新不重启 VPN、全部 DNS 工具、Ping/TCP/HTTP 与 HEAD 健康检查", flush=True)
+
+            # 真实故障验证：默认三次失败重启 VPN，容器持续健康，其他服务保持运行。
+            before = api("/status")
+            old_pid = next(item["pid"] for item in before["services"] if item["name"] == "openvpn")
+            other_pids = {item["name"]: item["pid"] for item in before["services"] if item["name"] in ["backend", "http", "sshd"]}
+            settings["health"].update({"expected_status": 503, "interval_secs": 1, "timeout_secs": 1, "failure_threshold": 3, "action": "restart", "action_cooldown_secs": 60})
+            api("/config", "PUT", document)
+            recovered = wait(lambda: (health if (health := api("/status")["health"])["vpn"]["last_action"] and health["vpn"]["last_action"]["state"] == "success" else None))
+            assert recovered["container"]["healthy"] and healthz() == 200
+            restarted = api("/status")
+            assert next(item["pid"] for item in restarted["services"] if item["name"] == "openvpn") != old_pid
+            assert {item["name"]: item["pid"] for item in restarted["services"] if item["name"] in other_pids} == other_pids
+            attempt = recovered["vpn"]["last_action"]["attempted_at"]
+            wait(lambda: api("/status")["health"]["vpn"]["consecutive_failures"] >= 6)
+            assert api("/status")["health"]["vpn"]["last_action"]["attempted_at"] == attempt, "冷却期间重复执行动作"
+            api("/services/openvpn/stop", "POST")
+            time.sleep(4)
+            stopped = api("/status")["health"]
+            assert stopped["vpn"]["state"] == "stopped" and stopped["container"]["healthy"]
+            assert stopped["vpn"]["last_action"]["attempted_at"] == attempt, "手动停止后触发了恢复"
+            settings["health"].update({"expected_status": 200, "action": "none"})
+            api("/config", "PUT", document)
+            api("/services/openvpn/start", "POST")
+            wait(lambda: api("/status")["vpn"]["state"] == "CONNECTED")
+            for action in ["reconnect", "reapply"]:
+                settings["health"].update({"expected_status": 503, "failure_threshold": 1, "action": action, "action_cooldown_secs": 4})
+                api("/config", "PUT", document)
+                wait(lambda: (last if (last := api("/status")["health"]["vpn"]["last_action"]) and last["action"] == action and last["state"] == "success" else None), timeout=90)
+                settings["health"].update({"expected_status": 200, "action": "none"})
+                api("/config", "PUT", document)
+                wait(lambda: api("/status")["vpn"]["state"] == "CONNECTED")
+            settings["health"].update({"expected_status": 503, "action": "none"})
+            api("/config", "PUT", document)
+            wait(lambda: api("/status")["health"]["vpn"]["state"] == "unhealthy")
+            assert healthz() == 200, "VPN 网络异常影响了容器健康"
+            settings["health"].update({"expected_status": 200, "failure_threshold": 3, "action": "restart", "action_cooldown_secs": 120, "interval_secs": 5, "timeout_secs": 5})
+            api("/config", "PUT", document)
+            wait(lambda: api("/status")["health"]["vpn"]["healthy"])
+            print("✓ 默认三次失败恢复、可调阈值、冷却、软重连、重新应用配置、手动停止保护", flush=True)
 
             settings["http"].update({"authentication": "password", "username": "httpuser", "password": "http-password"})
             settings["socks5"].update({"authentication": "password", "username": "sockuser", "password": "socks-password"})

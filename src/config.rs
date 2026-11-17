@@ -161,6 +161,8 @@ pub struct Health {
     pub timeout_secs: u64,
     pub failure_threshold: u32,
     pub ping_count: u8,
+    pub action: HealthAction,
+    pub action_cooldown_secs: u64,
 }
 
 impl Default for Health {
@@ -177,6 +179,8 @@ impl Default for Health {
             timeout_secs: 5,
             failure_threshold: 3,
             ping_count: 1,
+            action: HealthAction::Restart,
+            action_cooldown_secs: 120,
         }
     }
 }
@@ -194,6 +198,15 @@ pub enum CheckKind {
 pub enum HttpMethod {
     Get,
     Head,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum HealthAction {
+    None,
+    Reconnect,
+    Restart,
+    Reapply,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -344,6 +357,9 @@ impl Config {
             || !(100..=599).contains(&self.health.expected_status)
         {
             return Err("健康检查的间隔、失败阈值、次数和端口必须大于 0；超时为 1–60 秒；HTTP 状态码为 100–599".into());
+        }
+        if !(1..=86400).contains(&self.health.action_cooldown_secs) {
+            return Err("健康检查恢复动作的冷却时间必须为 1–86400 秒".into());
         }
         let mut endpoint_ids = HashSet::new();
         for endpoint in &self.vpn.endpoints {

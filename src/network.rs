@@ -474,18 +474,49 @@ pub async fn vpn_dns(server: &str, name: &str) -> Value {
 pub async fn custom_health(settings: &crate::config::Health) -> Value {
     use crate::config::CheckKind;
     let start = Instant::now();
-    let mut result = json!({"kind":settings.kind,"ok":false,"checked_at":timestamp()});
+    let mut result = json!({"enabled":settings.enabled,"kind":settings.kind,"ok":false});
     match settings.kind {
         CheckKind::Ping => {
-            let value = ping(&settings.target, settings.timeout_secs, settings.ping_count).await;
-            result["ok"] = json!(value.is_some());
-            result["latency_ms"] = json!(value);
+            let response = output(
+                "ping",
+                &[
+                    "-4".into(),
+                    "-n".into(),
+                    "-I".into(),
+                    "tun0".into(),
+                    "-c".into(),
+                    settings.ping_count.to_string(),
+                    "-w".into(),
+                    settings.timeout_secs.to_string(),
+                    "-W".into(),
+                    settings.timeout_secs.to_string(),
+                    settings.target.clone(),
+                ],
+                None,
+                settings.timeout_secs + 1,
+            )
+            .await;
+            result["ok"] = json!(response.is_ok_and(|response| response.status.success()));
             result["target"] = json!(settings.target);
         }
         CheckKind::Tcp => {
-            let value = tcping(&settings.target, settings.port, settings.timeout_secs).await;
-            result["ok"] = json!(value.is_some());
-            result["latency_ms"] = json!(value);
+            let connect = async {
+                let addresses =
+                    tokio::net::lookup_host((settings.target.as_str(), settings.port)).await?;
+                for address in addresses.filter(|address| address.is_ipv4()) {
+                    let socket = tokio::net::TcpSocket::new_v4()?;
+                    socket.bind_device(Some(b"tun0"))?;
+                    if socket.connect(address).await.is_ok() {
+                        return Ok::<_, std::io::Error>(());
+                    }
+                }
+                Err(std::io::Error::other("VPN 隧道内 TCP 连接失败"))
+            };
+            result["ok"] = json!(
+                tokio::time::timeout(Duration::from_secs(settings.timeout_secs), connect,)
+                    .await
+                    .is_ok_and(|value| value.is_ok())
+            );
             result["target"] = json!(format!("{}:{}", settings.target, settings.port));
         }
         CheckKind::Http => {
@@ -494,6 +525,9 @@ pub async fn custom_health(settings: &crate::config::Health) -> Value {
                 "--show-error".into(),
                 "--noproxy".into(),
                 "*".into(),
+                "--ipv4".into(),
+                "--interface".into(),
+                "if!tun0".into(),
                 "--max-time".into(),
                 settings.timeout_secs.to_string(),
                 "--output".into(),
@@ -524,12 +558,13 @@ pub async fn custom_health(settings: &crate::config::Health) -> Value {
                 }
             }
             result["target"] = json!(settings.url);
-            result["latency_ms"] = json!(start.elapsed().as_secs_f64() * 1000.0);
         }
     }
     if result["ok"] != true && result.get("error").is_none() {
-        result["error"] = json!("检查未成功或结果不符合预期")
+        result["error"] = json!("VPN 隧道内检查未成功或结果不符合预期")
     }
+    result["latency_ms"] = json!(start.elapsed().as_secs_f64() * 1000.0);
+    result["checked_at"] = json!(timestamp());
     result
 }
 
