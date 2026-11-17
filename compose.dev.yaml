@@ -1,0 +1,9 @@
+services:
+  openvpn-web:
+    image: openvpn-web:dev
+    build:
+      target: development
+    ports:
+      - "127.0.0.1:${SUPERVISOR_PORT:-19001}:9001/tcp"
+    volumes:
+      - ./target/dev-dist:/app/dev:ro

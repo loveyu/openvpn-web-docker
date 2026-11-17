@@ -56,7 +56,8 @@ shellcheck --shell=sh --severity=style docker/*.sh
 shellcheck --shell=bash --severity=style scripts/*.sh
 
 # YAML、TOML、Dockerfile 和 Compose 配置。
-yamllint --strict .github compose.yaml
+yamllint --strict .github compose.yaml compose.dev.yaml
 RUST_LOG=error taplo fmt --check Cargo.toml pyproject.toml rust-toolchain.toml taplo.toml
 hadolint --failure-threshold warning Dockerfile
 docker compose config --quiet
+docker compose -f compose.yaml -f compose.dev.yaml config --quiet

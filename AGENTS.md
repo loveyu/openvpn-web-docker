@@ -16,6 +16,7 @@
 | `frontend/src/main.tsx` | 前端页面、Hash 路由和交互 |
 | `frontend/src/api.ts`、`frontend/src/types.ts` | API 请求及前端类型；修改接口时同步核对 |
 | `docker/`、`Dockerfile`、`compose.yaml` | 启动脚本、Supervisor 配置、多阶段构建与部署 |
+| `scripts/dev.sh`、`compose.dev.yaml` | tmux 开发环境、临时后端、Rust 构建与进程更新 |
 | `scripts/smoke.py` | 使用隔离 Docker 网络和临时 VPN 服务端的集成验证 |
 | `docs/` | 部署、配置、网络、健康检查、存储和开发文档 |
 
@@ -28,12 +29,18 @@ Rust 工具链以 `rust-toolchain.toml` 为准，Node 版本以 `frontend/.node-
 推荐本机运行 Vite、容器运行后端和 VPN 服务，具体步骤见 [开发与验证](docs/development.md)。首次启动时复制 `.env.example` 为 `.env`，已有文件则保留原配置，设置 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD` 后启动。以下命令在仓库根目录执行：
 
 ```bash
-docker compose up -d --build openvpn-web
-docker compose logs -f --tail=100 openvpn-web
-pnpm --dir frontend dev
+./scripts/dev.sh start
+./scripts/dev.sh stop
+./scripts/dev.sh restart
 ```
 
-前端默认地址为 `http://127.0.0.1:5173`，容器管理入口默认为 `http://127.0.0.1:18080`。Vite 从根目录 `.env` 读取 `WEB_PORT`，代理 `/api` 和 `/healthz`；保留原始 `Host` 并支持 WebSocket，以满足后端同源校验。修改后端代码需要重新构建容器，修改映射端口或管理认证环境变量需要重新创建容器。
+开发环境使用一个 `openvpn-web-dev` tmux 会话：`frontend` 窗口运行本机 pnpm / Vite，`backend` 窗口构建并通过 `docker compose run --rm --service-ports` 运行临时后端、显示容器日志。停止时删除临时容器，保留配置与构建缓存；已有普通 Compose 后端须先自行停止。
+
+前端默认地址为 `http://127.0.0.1:5173`，后端默认地址为 `http://127.0.0.1:18080`。Vite 从根目录 `.env` 读取 `WEB_PORT`，自动代理 `/api` 和 `/healthz`，保留原始 `Host` 并支持 WebSocket，以满足后端同源校验；前端开发请求应始终经该代理访问容器后端。
+
+修改 Rust 代码后执行 `./scripts/dev.sh build`：脚本在匹配运行环境的 Rust 容器中增量构建，成功后原子替换目录挂载的 `target/dev-dist/openvpn-web`，自动重启 Supervisor 的 `backend`、`health` 和当时已运行的 `socks5`；构建失败保留当前版本，无需 `docker cp`。不重跑一次性 bootstrap，不开启已停止的可选服务。涉及启动、防火墙初始化、Docker 或 `.env` 配置的变更执行 `./scripts/dev.sh restart`。
+
+开发 Supervisor 提供 HTTP / XML-RPC 管理，默认 `http://127.0.0.1:19001`，使用 `.env` 的管理账号，支持网页直接重启进程；`SUPERVISOR_PORT` 调整宿主端口。此网络管理入口仅开发镜像启用，生产仍使用 Unix socket。
 
 按变更范围执行现有检查，与 [GitHub CI](.github/workflows/docker.yml) 保持一致：
 
@@ -67,7 +74,7 @@ smoke 脚本需要 Linux Docker Engine、`/dev/net/tun`、内核 nftables 支持
 
 - 使用独立 Docker bridge 网络，不支持 host 模式或共享其他容器的网络命名空间。固定使用 `tun0`、IPv4 VPN 远端和全隧道路由。
 - 保持服务启动前安装默认拒绝的 nftables 策略、失败即退出的行为。VPN 断线后，代理和 SSH 的新出站连接不能回退到 Docker 默认网关；隧道外 IPv6 同样默认拒绝。隧道外例外规则详见 [DNS 与网络](docs/networking.md)。
-- 容器端口固定为 Web `80`、HTTP `8888`、SOCKS5 `1080`、SSH `22`。宿主机映射通过部署配置调整，并同步对应的 `PUBLISHED_*` 展示值，不重新引入各 profile 的监听端口配置。
+- 容器端口固定为 Web `80`、HTTP `8888`、SOCKS5 `1080`、SSH `22`。开发镜像额外启用 Supervisor `9001`，仅映射宿主机回环地址。宿主机映射通过部署配置调整，并同步对应的 `PUBLISHED_*` 展示值，不重新引入各 profile 的监听端口配置。
 - 同一时间只运行一套 VPN 配置。切换 profile 时保持旧 SSH 会话终止、服务切换和账户隔离；“保存配置”与应用或重启服务的语义保持一致。
 - 管理认证由 `ADMIN_USERNAME`、`ADMIN_PASSWORD` 环境变量配置；保持写请求和 WebSocket 的同源校验。`/healthz` 不要求认证，不应返回配置或密钥。
 - `/config` 保存真实配置、密钥、日志及 SSH 数据，`/run/vpnweb` 保存运行时文件。保持配置和密钥文件 `0600`、密钥目录 `0700` 及现有账户隔离规则；存储结构见 [存储与权限](docs/storage.md)。

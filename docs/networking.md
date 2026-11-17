@@ -29,6 +29,8 @@ MTR 和 Traceroute 通过同源 WebSocket 连接探测，由服务端每 2 秒�
 
 隧道外例外限于管理连接回复，以及 root 发起的已解析 VPN IP/端口通信、endpoint Ping 和固定 HTTPDNS IP/TCP 端口请求。HTTPDNS 例外供启动异步探测、断线重连和工具页使用，持续保留；普通 UDP/TCP 53 系统 DNS 没有出口例外。
 
+[开发镜像](development.md#supervisor-网络管理)还允许 Supervisor `9001` 的入站管理连接及回包，宿主机仅映射回环地址；同样不允许隧道外主动出站。
+
 固定使用 `tun0`、IPv4 VPN 远端和全隧道路由；标准 `dev tun`
 自动规范化。守护进程、日志、管理 socket、脚本及凭据路径由容器控制。配置中的冲突选项会提示移除，不执行外部脚本/插件，不支持二次
 `config` 引用、`<connection>` 分组、`route-nopull`

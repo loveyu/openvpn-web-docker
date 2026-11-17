@@ -446,6 +446,10 @@ async fn firewall(rt: &Runtime, config: &Active, endpoints: &[Remote]) -> Result
         info
     };
     let mut ports = vec![WEB_PORT];
+    // 开发 Supervisor 复用管理连接的回程路由，不增加隧道外主动出站权限。
+    if std::env::var("VPNWEB_DEV").as_deref() == Ok("1") {
+        ports.push(9001);
+    }
     for (enabled, port) in [
         (config.settings.http.enabled, HTTP_PORT),
         (config.settings.socks5.enabled, SOCKS5_PORT),

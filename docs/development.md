@@ -47,48 +47,61 @@ Apple Silicon 的 Docker Desktop 默认构建 `linux/arm64`，Intel Mac 和 x86-
 
 ## 本地前端 + 容器后端
 
-前端使用本机 Node.js 和 pnpm 运行 Vite，推荐通过 [fnm](https://github.com/Schniz/fnm)
-管理 Node 版本。`frontend/.node-version` 固定为
-`26.13.1`，与 Docker、CI 一致。Rust 后端和 OpenVPN、代理、Supervisor 等依赖运行在 Docker 容器内；本机无需安装 Rust 即可启动这套开发环境。
+开发入口为 `./scripts/dev.sh`，需要 Bash、tmux、普通 Docker Engine / Docker Desktop、Docker Compose、Node.js 和 pnpm。本机无需安装 Rust。前端使用本机 Node.js 运行 Vite；Rust 在与运行镜像相同的 Debian 13、相同架构的 Rust 容器中编译，VPN 和代理运行在开发后端容器内。
 
-终端一，按[部署说明](deployment.md#docker-compose推荐)配置管理认证，并在仓库根目录启动后端：
+推荐使用 [fnm](https://github.com/Schniz/fnm) 管理 Node 版本，首次配置：
 
 ```bash
+eval "$(fnm env --use-on-cd --shell bash)"
+cd frontend
+fnm use --install-if-missing
+npm install --global pnpm@12.11.2
+cd ..
 # 仅首次创建；已有 .env 时保留原配置
 test -f .env || cp .env.example .env
-# 先在 .env 中设置 ADMIN_USERNAME 和 ADMIN_PASSWORD
-docker compose up -d --build
-docker compose logs -f --tail=100 openvpn-web
+# 在 .env 中设置 ADMIN_USERNAME 和 ADMIN_PASSWORD
 ```
 
-终端二，安装 fnm 后，在 Bash 中启动本地前端：
+启动、停止和重启：
 
 ```bash
-cd frontend
-eval "$(fnm env --use-on-cd --shell bash)"
-fnm use --install-if-missing
-# 此 Node 版本首次使用时安装 pnpm；已安装对应版本则跳过
-npm install --global pnpm@12.11.2
-pnpm install --frozen-lockfile
-pnpm dev
+./scripts/dev.sh start
+./scripts/dev.sh stop
+./scripts/dev.sh restart
 ```
 
-可将 `eval "$(fnm env --use-on-cd --shell bash)"` 加入 `~/.bashrc`，此后进入 `frontend`
-目录时会自动切换 Node。增删依赖使用 `pnpm add` / `pnpm remove`，并提交更新后的 `pnpm-lock.yaml`。
+不带参数等同于 `start`。脚本创建一个 `openvpn-web-dev` tmux 会话，包含两个窗口：
 
-访问 Vite 输出的本地地址，默认是 <http://127.0.0.1:5173>。使用 `.env`
-中设置的管理用户名和密码登录。前端代码修改后热更新；`/api` 和 `/healthz` 由 Vite 转发到
-`http://127.0.0.1:${WEB_PORT}`，其中 `WEB_PORT` 读取仓库根目录的 `.env`，默认
-`18080`。代理支持 WebSocket 并保留原始 `Host`，以通过后端写操作和 WebSocket 的同源校验。修改
-`WEB_PORT` 后，需要重新创建容器并重启 Vite。
+| 窗口 | 行为 |
+| --- | --- |
+| `frontend` | 自动执行 `pnpm install --frozen-lockfile`，再运行 `pnpm dev --strictPort` |
+| `backend` | 构建开发镜像和 Rust，使用 `docker compose run --detach --rm --service-ports` 启动 `openvpn-web-dev` 容器，并持续显示容器日志 |
 
-修改 Rust 代码或容器配置后，在仓库根目录执行以下命令重新构建并更新后端：
+交互终端会进入该会话；在 tmux 内执行会切换会话。重复 `start` 进入已有会话，不重复启动服务。按 `Ctrl-b d` 离开后服务继续运行，用 `tmux attach-session -t openvpn-web-dev` 重新进入；按 `Ctrl-b w` 选择窗口。首次构建可能较慢，错误输出保留在对应窗口。停止命令终止两个窗口、构建容器和开发后端，后端退出后由 `--rm` 自动删除；`./config` 和 `target/` 下的构建缓存保留。
+
+已有普通 Compose 后端运行时，脚本会提示先自行停止，避免共用配置和端口；脚本不会自动停止该容器。VPN、代理和服务操作会作用于挂载的 `./config`，开发前按需备份。
+
+访问 <http://127.0.0.1:5173>，使用 `.env` 中的管理账号登录。前端代码修改后热更新；`/api` 和 `/healthz` 由 Vite 自动转发到 `http://127.0.0.1:${WEB_PORT}`，`WEB_PORT` 读取根目录 `.env`，默认 `18080`。代理支持 WebSocket 并保留原始 `Host`，满足后端同源校验。
+
+### 更新 Rust 代码
+
+修改 Rust 代码后，在另一终端执行：
 
 ```bash
-docker compose up -d --build openvpn-web
+./scripts/dev.sh build
 ```
 
-VPN、代理和服务操作会作用于容器及其挂载的 `./config`，开发前按需备份该目录。
+脚本在临时 Rust 容器中增量执行 debug 构建；成功后将二进制原子替换到 `target/dev-dist/openvpn-web`，再通过 `supervisorctl` 重启 `backend`、`health` 和当时已运行的 `socks5`。编译失败不会替换产物或重启进程；不会重跑一次性的 `bootstrap`，也不会开启已停止的可选服务。重启 SOCKS5 会中断已有 SOCKS5 连接。
+
+整个 `target/dev-dist` 目录只读挂载到容器 `/app/dev`，开发镜像中的 `/usr/local/bin/openvpn-web` 链接到该目录，无需 `docker cp`。使用目录挂载使原子替换后的新文件立即可见；直接挂载单个二进制文件会固定旧文件的 inode。Rust 构建缓存和 Cargo 下载缓存分别保存在 `target/dev-build`、`target/dev-cargo`，以宿主用户身份写入。
+
+修改 `.env`、`Dockerfile`、`docker/` 或 Compose 配置后执行 `./scripts/dev.sh restart`，重新构建并创建开发容器。涉及防火墙初始化或启动流程的 Rust 变更也应使用 `restart`，以验证完整启动过程。
+
+### Supervisor 网络管理
+
+仅开发镜像启用 Supervisor HTTP / XML-RPC，宿主机固定绑定 `127.0.0.1`，默认地址为 <http://127.0.0.1:19001>，端口可在 `.env` 中通过 `SUPERVISOR_PORT` 调整。使用同一组 `ADMIN_USERNAME`、`ADMIN_PASSWORD` 登录，可在网页直接查看、停止或重启进程；也可用支持 XML-RPC 的客户端连接 `/RPC2`。开发镜像设置 `VPNWEB_DEV=1`，防火墙据此允许容器端口 `9001` 的入站管理连接及回包，保持隧道外主动出站默认拒绝。生产镜像不设置该标记，仅保留原有 Unix socket。
+
+手动重启进程不会编译 Rust；Rust 更新统一使用 `./scripts/dev.sh build`，确保新产物已经发布。
 
 ## 质量检查与格式化
 

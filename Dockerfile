@@ -36,6 +36,16 @@ COPY --from=socks-builder /usr/local/sbin/sockd /usr/sbin/danted
 RUN apt-get update && apt-get install -y --no-install-recommends iputils-ping procps mtr-tiny traceroute \
     && rm -rf /var/lib/apt/lists/*
 
+FROM runtime AS development
+ENV VPNWEB_DEV=1
+COPY docker/http-run.sh /usr/local/lib/vpnweb/http-run.sh
+COPY docker/supervisord.conf /etc/supervisor/supervisord.conf
+COPY docker/supervisord.dev.conf /etc/supervisor/supervisord.dev.conf
+COPY --chmod=755 docker/entrypoint.sh /usr/local/bin/vpnweb-entrypoint
+RUN cat /etc/supervisor/supervisord.dev.conf >> /etc/supervisor/supervisord.conf \
+    && ln -s /app/dev/openvpn-web /usr/local/bin/openvpn-web
+ENTRYPOINT ["/usr/local/bin/vpnweb-entrypoint"]
+
 FROM --platform=$BUILDPLATFORM node:26.13.1-trixie-slim AS frontend
 WORKDIR /build/frontend
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
