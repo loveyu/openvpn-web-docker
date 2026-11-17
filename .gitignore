@@ -16,6 +16,26 @@ target
 # rustc will dump stack traces when hitting an internal compiler error to PWD
 rustc-ice-*.txt
 
+# 前端构建与本地运行数据
+frontend/node_modules/
+frontend/dist/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+config/
+__pycache__/
+*.pyc
+
+# 本地 VPN 配置、证书、私钥和运行日志
+*.ovpn
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.log
+
 # RustRover
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
 #  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore

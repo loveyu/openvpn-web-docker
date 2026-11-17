@@ -1,0 +1,27 @@
+services:
+  openvpn-web:
+    image: ${IMAGE:-openvpn-web:local}
+    build: .
+    container_name: openvpn-web
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      net.ipv4.conf.all.src_valid_mark: "1"
+      net.ipv4.conf.all.rp_filter: "2"
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${WEB_PORT:-18080}:8080/tcp"
+      - "${BIND_ADDRESS:-127.0.0.1}:${HTTP_PROXY_PORT:-17888}:8888/tcp"
+      - "${BIND_ADDRESS:-127.0.0.1}:${SOCKS5_PORT:-17080}:1080/tcp"
+      - "${BIND_ADDRESS:-127.0.0.1}:${SSH_PORT:-17222}:2222/tcp"
+    volumes:
+      - ./config:/config
+    tmpfs:
+      - /run
+    environment:
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      TZ: ${TZ:-Asia/Shanghai}
+    stop_grace_period: 45s
