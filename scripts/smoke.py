@@ -121,14 +121,22 @@ push "dhcp-option DNS 10.77.0.1"
 keepalive 2 10
 verb 3
 ''')
-            (directory / "fixture.py").write_text('''import http.server, json, socket, struct, sys, threading, urllib.parse
+            (directory / "fixture.py").write_text('''import http.server, json, socket, struct, sys, threading, urllib.parse, zlib
 address = sys.argv[1]
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
         name = query.get("name", [""])[0]
         body = json.dumps({"Status": 0, "Answer": [{"type": 1, "data": address if name == "vpn.test" else "10.77.0.1"}]}).encode() if name else b"vpnweb-test-ok"
-        self.send_response(200); self.end_headers(); self.wfile.write(body)
+        image = self.path == "/image.png"
+        if image:
+            def chunk(kind, data):
+                return struct.pack("!I", len(data)) + kind + data + struct.pack("!I", zlib.crc32(kind + data))
+            body = bytes.fromhex("89504e470d0a1a0a") + chunk(b"IHDR", struct.pack("!IIBBBBB", 1, 1, 8, 6, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(bytes([0, 48, 201, 145, 255]))) + chunk(b"IEND", b"")
+        self.send_response(200)
+        self.send_header("Content-Type", "image/png" if image else "text/plain")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers(); self.wfile.write(body)
     def do_HEAD(self):
         self.send_response(200); self.send_header("Content-Length", "1024"); self.end_headers()
     def log_message(self, *args): pass
@@ -228,6 +236,24 @@ http.server.ThreadingHTTPServer(("0.0.0.0", 18080), Handler).serve_forever()
             api("/config", "PUT", document)
             assert api("/health", "POST")["ok"]
             print("✓ DNS 热更新不重启 VPN、全部 DNS 工具、Ping/TCP/HTTP 与 HEAD 健康检查", flush=True)
+
+            assert api("/tools/ping", "POST", {"host": "10.77.0.1"})["ok"]
+            assert api("/tools/tcping", "POST", {"host": "target.test", "port": 18080})["ok"]
+            assert not api("/tools/tcping", "POST", {"host": "10.77.0.1", "port": 1})["ok"]
+            get = api("/tools/curl", "POST", {"url": "http://target.test:18080/", "method": "GET"})
+            assert get["ok"] and get["status_code"] == 200 and get["stdout"] == "vpnweb-test-ok"
+            assert "GET / HTTP" in get["stderr"] and "Content-Type" in get["stderr"]
+            head = api("/tools/curl", "POST", {"url": "http://target.test:18080/", "method": "HEAD"})
+            assert head["ok"] and "Content-Length: 1024" in head["stdout"] and "vpnweb-test-ok" not in head["stdout"]
+            image_result = api("/tools/curl", "POST", {"url": "http://target.test:18080/image.png", "method": "GET"})
+            assert image_result["content_type"] == "image/png" and base64.b64decode(image_result["image_base64"]).startswith(bytes.fromhex("89504e470d0a1a0a"))
+            for path, payload in [("curl", {"url": "file:///etc/passwd", "method": "GET"}), ("curl", {"url": "http://target.test", "method": "POST"}), ("tcping", {"host": "target.test", "port": 0})]:
+                try:
+                    api(f"/tools/{path}", "POST", payload)
+                    raise AssertionError("无效探测参数未被拒绝")
+                except RuntimeError:
+                    pass
+            print("✓ Ping、TCPing 成功与失败、CURL GET/HEAD 详细日志、PNG 原始字节及输入边界", flush=True)
 
             # 真实故障验证：默认三次失败重启 VPN，容器持续健康，其他服务保持运行。
             before = api("/status")

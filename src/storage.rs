@@ -74,10 +74,33 @@ fn extract_inline(vpn: &mut Vpn) -> io::Result<()> {
     Ok(())
 }
 
+fn stored_document(text: &str) -> io::Result<ConfigDocument> {
+    let mut value: serde_json::Value = serde_saphyr::from_str(text).map_err(io::Error::other)?;
+    // 仅兼容磁盘上的旧端口字段；API 反序列化仍拒绝修改服务监听端口。
+    if let Some(document) = value.as_object_mut() {
+        document.remove("web");
+    }
+    if let Some(profiles) = value
+        .get_mut("profiles")
+        .and_then(|profiles| profiles.as_array_mut())
+    {
+        for profile in profiles {
+            for service in ["http", "socks5", "sshd"] {
+                if let Some(settings) = profile
+                    .get_mut("settings")
+                    .and_then(|settings| settings.get_mut(service))
+                    .and_then(|settings| settings.as_object_mut())
+                {
+                    settings.remove("port");
+                }
+            }
+        }
+    }
+    serde_json::from_value(value).map_err(io::Error::other)
+}
+
 pub fn load(directory: &Path) -> io::Result<ConfigDocument> {
-    let mut document: ConfigDocument =
-        serde_saphyr::from_str(&fs::read_to_string(directory.join("config.yaml"))?)
-            .map_err(io::Error::other)?;
+    let mut document = stored_document(&fs::read_to_string(directory.join("config.yaml"))?)?;
     for profile in &mut document.profiles {
         for reference in materials(&mut profile.settings.vpn) {
             if !reference.is_empty() {
@@ -118,7 +141,7 @@ pub fn save(directory: &Path, document: &ConfigDocument) -> io::Result<()> {
     fs::set_permissions(&secrets, fs::Permissions::from_mode(0o700))?;
     let old: Option<ConfigDocument> = fs::read_to_string(directory.join("config.yaml"))
         .ok()
-        .and_then(|value| serde_saphyr::from_str(&value).ok());
+        .and_then(|value| stored_document(&value).ok());
     let mut stored = document.clone();
     for profile in &mut stored.profiles {
         extract_inline(&mut profile.settings.vpn)?;
@@ -154,6 +177,29 @@ pub fn save(directory: &Path, document: &ConfigDocument) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn loads_and_resaves_legacy_configs_without_service_port_fields() {
+        let directory = tempfile::tempdir().unwrap();
+        let document = ConfigDocument::default();
+        let mut legacy = serde_json::to_value(&document).unwrap();
+        legacy["web"] = serde_json::json!({"port": 8080});
+        for service in ["http", "socks5", "sshd"] {
+            legacy["profiles"][0]["settings"][service]["port"] = 2222.into();
+        }
+        let path = directory.path().join("config.yaml");
+        fs::write(&path, serde_saphyr::to_string(&legacy).unwrap()).unwrap();
+
+        let loaded = load(directory.path()).unwrap();
+        assert_eq!(
+            serde_json::to_value(&loaded).unwrap(),
+            serde_json::to_value(&document).unwrap()
+        );
+        save(directory.path(), &loaded).unwrap();
+        let saved: serde_json::Value =
+            serde_saphyr::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(saved, serde_json::to_value(&document).unwrap());
+    }
+
     #[test]
     fn yaml_contains_only_ids_and_secrets_are_private_and_isolated() {
         let directory = tempfile::tempdir().unwrap();

@@ -1254,31 +1254,85 @@ async fn apply(rt: &Runtime, service: &str, action: &str) -> Result<Value> {
     Ok(json!({"message":"配置已应用"}))
 }
 
+fn process_tree(pid: u32) -> HashSet<u32> {
+    let mut pids = HashSet::new();
+    let mut pending = vec![pid];
+    while let Some(pid) = pending.pop() {
+        if !pids.insert(pid) {
+            continue;
+        }
+        // Dante 由 socks-run 启动，Tinyproxy 也会派生 worker；监听者可能是子进程。
+        if let Ok(children) = fs::read_to_string(format!("/proc/{pid}/task/{pid}/children")) {
+            pending.extend(
+                children
+                    .split_whitespace()
+                    .filter_map(|pid| pid.parse::<u32>().ok()),
+            );
+        }
+    }
+    pids
+}
+
+fn listening_port(listing: &str, pids: &HashSet<u32>, expected: u16) -> Option<u16> {
+    let port = |line: &str| -> Option<u16> {
+        line.split_whitespace()
+            .nth(3)?
+            .rsplit(':')
+            .next()?
+            .parse()
+            .ok()
+    };
+    let actual = listing
+        .lines()
+        .filter(|line| {
+            line.split("pid=").skip(1).any(|process| {
+                process
+                    .split(',')
+                    .next()
+                    .and_then(|pid| pid.parse::<u32>().ok())
+                    .is_some_and(|pid| pids.contains(&pid))
+            })
+        })
+        .filter_map(port)
+        .min();
+    // Tinyproxy 降权后，缺少 SYS_PTRACE 的容器无法读取其 socket PID。
+    // 仅对未公开进程信息的监听项，按本程序生成的固定服务端口检测。
+    actual.or_else(|| {
+        listing
+            .lines()
+            .find(|line| !line.contains("users:") && port(line) == Some(expected))
+            .map(|_| expected)
+    })
+}
+
 async fn status(rt: &Runtime) -> Result<Value> {
     let active = rt.active()?;
     let (services, firewall) = tokio::try_join!(processes(), health::firewall_ready())?;
     let container_health = health::container_status(&services, firewall);
     let vpn_health = health::vpn_status(rt).await?;
-    let listing = network::command("ss", &args(&["-H", "-lnt"]), None).await?;
-    let listening = listing
-        .lines()
-        .filter_map(|line| {
-            line.split_whitespace()
-                .nth(3)?
-                .rsplit(':')
-                .next()?
-                .parse::<u16>()
-                .ok()
-        })
-        .collect::<HashSet<_>>();
+    let listing = network::command("ss", &args(&["-H", "-lntp"]), None).await?;
     let ports = [
-        ("backend", WEB_PORT),
-        ("http", HTTP_PORT),
-        ("socks5", SOCKS5_PORT),
-        ("sshd", SSH_PORT),
+        ("backend", WEB_PORT, "PUBLISHED_WEB_PORT"),
+        ("http", HTTP_PORT, "PUBLISHED_HTTP_PORT"),
+        ("socks5", SOCKS5_PORT, "PUBLISHED_SOCKS5_PORT"),
+        ("sshd", SSH_PORT, "PUBLISHED_SSH_PORT"),
     ]
     .into_iter()
-    .map(|(name, port)| json!({"name":name,"port":port,"listening":listening.contains(&port)}))
+    .map(|(name, target_port, published_env)| {
+        let pid = services
+            .iter()
+            .find(|service| service["name"] == name)
+            .and_then(|service| service["pid"].as_u64())
+            .unwrap_or(0) as u32;
+        let actual = (pid != 0)
+            .then(|| listening_port(&listing, &process_tree(pid), target_port))
+            .flatten();
+        let published = std::env::var(published_env)
+            .ok()
+            .and_then(|port| port.parse::<u16>().ok())
+            .filter(|port| *port != 0);
+        json!({"name":name,"port":actual.unwrap_or(target_port),"listening":actual.is_some(),"published_port":published,"target_port":target_port})
+    })
     .collect::<Vec<_>>();
     Ok(
         json!({"services":services,"vpn":vpn_state(rt).await,"kill_switch":firewall,"ports":ports,"dns":rt.read("dns.json",json!({"mode":active.settings.vpn.dns_mode,"pushed":[],"effective":[],"source":"none"}))?,"active_profile":active.id,"httpdns":rt.read("httpdns.json",json!({"state":"probing","results":[]}))?,"httpdns_presets":network::providers(),"endpoint_probes":rt.read("endpoint-probes.json",json!([]))?,"selected_endpoint":rt.read("selected-endpoint.json",Value::Null)?,"remote_endpoints":rt.endpoints()?,"health":{"container":container_health,"vpn":vpn_health}}),
@@ -1487,6 +1541,37 @@ pub async fn dispatch(data: PathBuf, values: &[String]) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detects_service_ports_by_process_instead_of_expected_port() {
+        let listing = "LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:((\"other\",pid=142,fd=3))\n\
+                       LISTEN 0 128 [::]:2222 [::]:* users:((\"sshd\",pid=42,fd=4))";
+        assert_eq!(
+            listening_port(listing, &HashSet::from([42]), 22),
+            Some(2222)
+        );
+        assert_eq!(listening_port(listing, &HashSet::from([99]), 22), None);
+    }
+
+    #[test]
+    fn detects_a_socket_shared_by_service_workers() {
+        let listing = "LISTEN 0 128 0.0.0.0:1080 0.0.0.0:* users:((\"danted\",pid=51,fd=7),(\"danted\",pid=52,fd=7))";
+        assert_eq!(
+            listening_port(listing, &HashSet::from([50, 52]), 1080),
+            Some(1080)
+        );
+    }
+
+    #[test]
+    fn detects_listeners_when_the_kernel_hides_socket_owners() {
+        let listing = "LISTEN 0 1024 0.0.0.0:8888 0.0.0.0:*";
+        assert_eq!(
+            listening_port(listing, &HashSet::from([154]), 8888),
+            Some(8888)
+        );
+        assert_eq!(listening_port(listing, &HashSet::from([154]), 1080), None);
+    }
+
     #[test]
     fn parses_client_options_and_blocks_external_programs() {
         let mut vpn = config::Vpn {

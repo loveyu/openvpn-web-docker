@@ -85,7 +85,13 @@ export interface Status {
   version: string;
   kill_switch: boolean;
   basic_auth_enabled: boolean;
-  ports: { name: Service; port: number; listening: boolean }[];
+  ports: {
+    name: Service;
+    port: number;
+    listening: boolean;
+    published_port: number | null;
+    target_port: number;
+  }[];
   dns: {
     mode: string;
     pushed: string[];

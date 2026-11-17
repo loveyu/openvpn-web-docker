@@ -6,25 +6,71 @@
 
 ## 启动
 
-需要 Linux Docker Engine、Compose 插件、`/dev/net/tun` 和内核 nftables 支持。使用独立 **bridge 网络，不支持 host 模式或共享其他容器的网络命名空间**；防火墙与路由只作用于本容器。
+需要 Linux Docker Engine、`/dev/net/tun` 和内核 nftables 支持；采用 Docker Compose 时还需 Compose 插件。使用独立 **bridge 网络，不支持 host 模式或共享其他容器的网络命名空间**；防火墙与路由只作用于本容器。
+
+以下两种启动方式都需要先设置管理用户名和密码；示例中的密码请替换为自己的强密码。
+
+### Docker Compose（推荐）
+
+首次使用时复制环境变量模板；已有 `.env` 时直接编辑，保留原有配置：
 
 ```bash
-cp .env.example .env
-# 可选：编辑 .env，设置 ADMIN_USERNAME 和 ADMIN_PASSWORD
-# 默认均为空，不启用管理认证
+test -f .env || cp .env.example .env
+```
+
+在项目根目录的 `.env` 中设置：
+
+```dotenv
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD='请替换为强密码'
+```
+
+然后启动：
+
+```bash
 docker compose up -d --build
 ```
+
+修改用户名或密码后，执行 `docker compose up -d --force-recreate openvpn-web` 重新创建容器；仅执行 `docker compose restart` 不会更新环境变量。
+
+### Docker Run
+
+先构建本地镜像，然后通过 `-e` 传入管理用户名和密码：
+
+```bash
+docker build -t openvpn-web:local .
+docker run -d --name openvpn-web --restart unless-stopped \
+  --cap-add NET_ADMIN --device /dev/net/tun:/dev/net/tun \
+  --sysctl net.ipv4.conf.all.src_valid_mark=1 \
+  --sysctl net.ipv4.conf.all.rp_filter=2 \
+  --tmpfs /run \
+  -v "$(pwd)/config:/config" \
+  -p 127.0.0.1:18080:80 \
+  -p 127.0.0.1:17888:8888 \
+  -p 127.0.0.1:17080:1080 \
+  -p 127.0.0.1:17222:22 \
+  -e ADMIN_USERNAME=admin \
+  -e ADMIN_PASSWORD='请替换为强密码' \
+  -e TZ=Asia/Shanghai \
+  -e PUBLISHED_WEB_PORT=18080 \
+  -e PUBLISHED_HTTP_PORT=17888 \
+  -e PUBLISHED_SOCKS5_PORT=17080 \
+  -e PUBLISHED_SSH_PORT=17222 \
+  openvpn-web:local
+```
+
+两种方式任选其一。Docker Run 修改环境变量后也需要重新创建容器，挂载的 `config` 目录保留配置。
 
 访问 <http://127.0.0.1:18080>。在 OpenVPN 页面粘贴或导入 `client.ovpn`，填写证书、私钥及所需凭据，配置 endpoint 后点击“保存并连接”。默认手动 DNS 为 `1.1.1.1`，请按 VPN 网络要求修改，也可切换到“使用 OpenVPN 下发 DNS”。SOCKS5 和 SSH 默认关闭，在各自页面启用。
 
 | 服务 | 默认状态 | 容器端口 | 默认宿主机端口 |
 | --- | --- | --- | --- |
-| 管理页面 / API | 开启，可选 Basic Auth | 80 | 18080 |
+| 管理页面 / API | 开启，按示例配置 Basic Auth | 80 | 18080 |
 | HTTP / HTTPS CONNECT | 开启，无认证 | 8888 | 17888 |
 | SOCKS5 TCP CONNECT | 关闭 | 1080 | 17080 |
 | SSH / SFTP / 转发 | 关闭 | 22 | 17222 |
 
-Compose 默认绑定宿主机 `127.0.0.1`。局域网访问时设置 `.env` 的 `BIND_ADDRESS`；例如宿主机局域网 IP。管理 Basic Auth 通过 `ADMIN_USERNAME`、`ADMIN_PASSWORD` 环境变量设置，启用时必须同时设置两项，修改后重新创建容器。浏览器使用原生认证对话框，API 使用 `curl -u '用户名:密码'`。`/healthz` 不要求认证，返回健康状态，不包含配置或密钥。
+示例默认绑定宿主机 `127.0.0.1`。局域网访问时，Compose 设置 `.env` 的 `BIND_ADDRESS`，Docker Run 修改 `-p` 的绑定地址。管理 Basic Auth 通过 `ADMIN_USERNAME`、`ADMIN_PASSWORD` 环境变量设置，两项必须同时提供，修改后重新创建容器。浏览器使用原生认证对话框，API 使用 `curl -u '用户名:密码'`；点击页面中的 Basic Auth 可查看设置说明。`/healthz` 供容器健康检查使用，不要求认证，不包含配置或密钥。
 
 ## 配置和服务操作
 
@@ -33,13 +79,19 @@ Compose 默认绑定宿主机 `127.0.0.1`。局域网访问时设置 `.env` 的 
 - **OpenVPN**：粘贴标准 `.ovpn` 原文或手动选项；CA、客户端证书、私钥、`tls-auth`、`tls-crypt` 使用多行文本框。内联证书会在保存时提取到独立文件。
 - **HTTP**：Tinyproxy，支持关闭、无认证、用户名密码认证；Tinyproxy 的密码不能包含空白字符。
 - **SOCKS5**：Dante，支持关闭、无认证、用户名密码认证；支持 TCP CONNECT，不提供 UDP ASSOCIATE。等待 VPN 网卡出现后监听。
-- **SSH**：OpenSSH，支持密码、公钥或同时启用。密码为空时关闭密码登录；公钥每行一个。支持 SFTP、TCP 转发、`GatewayPorts clientspecified`、TUN 转发。免密 sudo 默认关闭，开启后此用户具有容器 root 权限。
+- **SSH**：OpenSSH，支持密码、公钥或同时启用。密码为空时关闭密码登录；支持配置多个公钥，每行一个，任意一个已配置公钥都可用于该用户登录。用户名和密码输入框关闭浏览器自动填充，点击后即可编辑。支持 SFTP、TCP 转发、`GatewayPorts clientspecified`、TUN 转发。免密 sudo 默认关闭，开启后此用户具有容器 root 权限。
 - **管理和日志**：概览显示服务状态和固定端口的监听状态，提供启动、停止、重启及配置入口。日志页可查看和下载近期输出。
 
 顶部“保存配置”只写磁盘；服务页“保存并重启”应用对应服务。容器重新启动后按保存设置恢复服务；OpenVPN 另外受“启动时自动连接”控制。SOCKS5 与 SSH 的用户名不能相同。
 
+右上角提供“跟随系统 / 亮色 / 暗色”主题切换，默认跟随系统并随系统外观自动变化，手动选择会保存在当前浏览器。界面支持手机和平板，窄屏顶部导航可横向滑动。
+
+页面使用 Hash 路由，可直接访问 `/#/vpn`、`/#/tools`、`/#/health` 等地址，支持刷新与浏览器前进、后退。网络工具先选择再展示，每个工具都有独立地址：`/#/tools/ping`、`/#/tools/tcping`、`/#/tools/curl`、`/#/tools/dns`、`/#/tools/mtr`、`/#/tools/traceroute`。
+
+代理请求示例需先在页面启用相应服务，并设置用户名和密码认证：
+
 ```bash
-curl -x http://127.0.0.1:17888 https://example.com
+curl -x http://127.0.0.1:17888 --proxy-user 'proxyuser:请替换为代理密码' https://example.com
 curl --proxy socks5h://127.0.0.1:17080 --proxy-user 'sockuser:password' https://example.com
 ssh -p 17222 work@127.0.0.1
 ```
@@ -61,6 +113,10 @@ ssh -p 17222 work@127.0.0.1
 OpenVPN 连接及重连时由 Rust hook 收集 `dhcp-option DNS`。后台展示下发地址和生效地址，可选择使用下发值或手动指定。点击“仅应用 DNS”直接改写容器内 `/etc/resolv.conf`，**不重启容器、VPN 或代理**；已存在的应用 DNS 缓存不会强制刷新。自动模式没有下发 DNS 时不自行回退到公网 DNS。
 
 网络工具页可输入域名，一次并行测试全部 HTTPDNS 直连 IP、自定义 HTTPDNS、VPN 下发 DNS 和手动 DNS，逐项显示答案、耗时与错误。VPN DNS 需要相应地址可达。
+
+网络工具页还提供 Ping（4 次 ICMP）、TCPing（5 秒 TCP 连接超时）和 CURL GET/HEAD 探测。CURL 使用 `-vvv`，展示响应内容、响应头、连接详情、HTTP 状态和耗时；GET 的图片响应直接预览，HEAD 只展示响应头。CURL 单次请求最多 20 秒、正文最多 2 MiB，详细日志保留前后共 64 KiB。工具不保存配置，不需要“保存配置”操作；探测从容器发起并遵循当前出口保护规则，域名经所配置的 HTTPDNS 解析。
+
+MTR 和 Traceroute 通过同源 WebSocket 连接探测，由服务端每 2 秒推送累计结果，完成后发送最终结果并关闭连接，单次最多 60 秒（含目标解析）。两者均关闭域名反解析；MTR 展示每跳 IP、发送与回包数、未回包比例和延迟，Traceroute 展示路由追踪输出。暂停仅冻结前端展示，后端继续运行；恢复时显示最新结果。终止、切换工具或离开页面会关闭连接，服务端同时终止探测及其子进程。反向代理需要支持 `/api/tools/trace` 的 WebSocket Upgrade。
 
 ### 健康检查
 
@@ -86,7 +142,11 @@ OpenVPN 连接及重连时由 Rust hook 收集 `dhcp-option DNS`。后台展示�
 
 容器监听端口固定为 Web `80`、HTTP 代理 `8888`、SOCKS5 `1080`、SSH `22`。后台不提供端口调整，所有 VPN 配置使用相同监听端口。
 
+读取旧版 YAML 时会忽略已废弃的 `web` 和各服务 `port` 字段，下一次保存配置时移除这些字段；API 不再接受服务监听端口设置。
+
 宿主机端口由 Docker 映射决定。在 `.env` 设置 `WEB_PORT`、`HTTP_PROXY_PORT`、`SOCKS5_PORT`、`SSH_PORT`，或直接修改 `compose.yaml` 映射左侧；右侧保持容器固定端口。例如 Web 使用 `18080:80`，SSH 使用 `17222:22`。调整映射后执行 `docker compose up -d --force-recreate`。
+
+概览按服务及其子进程检测实际 TCP 监听端口，未监听时显示服务预设端口。Compose 使用同一组端口变量向后端传入 `PUBLISHED_WEB_PORT`、`PUBLISHED_HTTP_PORT`、`PUBLISHED_SOCKS5_PORT`、`PUBLISHED_SSH_PORT`，页面同时显示“宿主机端口 → 容器目标端口”。这些映射信息来自部署配置，容器不读取 Docker API。直接修改 Compose 的映射或使用 `docker run` 时，也应同步提供对应的 `PUBLISHED_*` 值；未提供时页面明确显示“宿主机映射未提供”。
 
 **不要设置 `network_mode: host`**。当前实现依赖独立网络命名空间、IPv4 默认网关、连接标记和策略路由；也不提供其他容器通过 IP 转发共享隧道的网关模式。
 
@@ -175,11 +235,12 @@ profiles:
 | 后端 | Rust 1.100.0、Axum 0.8.9、Tokio 1.54.1 |
 | 前端 | React 19.3.1、TypeScript 7.0.2、Vite 8.3.8 |
 | 构建 Node | 26.13.1 LTS |
+| 前端包管理 | pnpm 12.11.2 |
 | 底包 | Debian 13 slim（trixie） |
 | 守护 | Supervisor；Python 仅为其依赖 |
 | 应用 | Debian 13 仓库的 OpenVPN、Tinyproxy、OpenSSH；官方源码 Dante 1.4.4 |
 
-初始化采用当前最新兼容稳定版并保存 Cargo/npm 锁文件。系统程序使用 Debian 13 稳定仓库更新，不混用 unstable。Dante 因不在 Debian 13 仓库中，从官方源码校验 SHA256 后构建。
+依赖使用 `Cargo.lock` 和 `frontend/pnpm-lock.yaml` 固定版本。前端通过 `.node-version` 指定 Node 版本，通过 `package.json` 的 `packageManager` 固定 pnpm 版本；本地、Docker 和 CI 均使用 pnpm 安装与构建。系统程序使用 Debian 13 稳定仓库更新，不混用 unstable。Dante 因不在 Debian 13 仓库中，从官方源码校验 SHA256 后构建。
 
 [GitHub 工作流](.github/workflows/docker.yml) 在 PR、main、`v*` 标签、手动和每周触发：
 
@@ -191,13 +252,56 @@ profiles:
 
 ## 开发与验证
 
+### 本地前端 + 容器后端
+
+前端使用本机 Node.js 和 pnpm 运行 Vite，推荐通过 [fnm](https://github.com/Schniz/fnm) 管理 Node 版本。`frontend/.node-version` 固定为 `26.13.1`，与 Docker、CI 一致。Rust 后端和 OpenVPN、代理、Supervisor 等依赖运行在 Docker 容器内；本机无需安装 Rust 即可启动这套开发环境。
+
+终端一，在仓库根目录启动后端：
+
+```bash
+# 仅首次创建；已有 .env 时保留原配置
+test -f .env || cp .env.example .env
+# 按“启动”章节先在 .env 中设置 ADMIN_USERNAME 和 ADMIN_PASSWORD
+docker compose up -d --build
+docker compose logs -f --tail=100 openvpn-web
+```
+
+终端二，安装 fnm 后，在 Bash 中启动本地前端：
+
+```bash
+cd frontend
+eval "$(fnm env --use-on-cd --shell bash)"
+fnm use --install-if-missing
+# 此 Node 版本首次使用时安装 pnpm；已安装对应版本则跳过
+npm install --global pnpm@12.11.2
+pnpm install --frozen-lockfile
+pnpm dev
+```
+
+可将 `eval "$(fnm env --use-on-cd --shell bash)"` 加入 `~/.bashrc`，此后进入 `frontend` 目录时会自动切换 Node。增删依赖使用 `pnpm add` / `pnpm remove`，并提交更新后的 `pnpm-lock.yaml`。
+
+访问 Vite 输出的本地地址，默认是 <http://127.0.0.1:5173>。使用 `.env` 中设置的管理用户名和密码登录。前端代码修改后热更新；`/api` 和 `/healthz` 由 Vite 转发到 `http://127.0.0.1:${WEB_PORT}`，其中 `WEB_PORT` 读取仓库根目录的 `.env`，默认 `18080`。代理支持 WebSocket 并保留原始 `Host`，以通过后端写操作和 WebSocket 的同源校验。修改 `WEB_PORT` 后，需要重新创建容器并重启 Vite。
+
+修改 Rust 代码或容器配置后，在仓库根目录执行以下命令重新构建并更新后端：
+
+```bash
+docker compose up -d --build openvpn-web
+```
+
+VPN、代理和服务操作会作用于容器及其挂载的 `./config`，开发前按需备份该目录。
+
+### 验证
+
+以下 Rust 静态检查和单元测试需要本机安装 `rust-toolchain.toml` 指定的工具链：
+
 ```bash
 cargo fmt --check
 cargo clippy --all-targets --locked -- -D warnings
 cargo test --locked
 cd frontend
-npm ci
-npm run build
+fnm use --install-if-missing
+pnpm install --frozen-lockfile
+pnpm build
 cd ..
 docker build -t openvpn-web:local .
 python3 scripts/smoke.py --image openvpn-web:local

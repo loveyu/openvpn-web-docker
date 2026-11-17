@@ -29,15 +29,17 @@ RUN printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d \
     && rm -rf /var/lib/apt/lists/* /etc/ssh/ssh_host_* \
     && mkdir -p /config /app/frontend /usr/local/lib/vpnweb
 COPY --from=socks-builder /usr/local/sbin/sockd /usr/sbin/danted
-RUN apt-get update && apt-get install -y --no-install-recommends iputils-ping procps \
+RUN apt-get update && apt-get install -y --no-install-recommends iputils-ping procps mtr-tiny traceroute \
     && rm -rf /var/lib/apt/lists/*
 
 FROM node:26.13.1-trixie-slim AS frontend
 WORKDIR /build/frontend
-COPY frontend/package*.json ./
-RUN --mount=type=cache,target=/root/.npm npm ci
+COPY frontend/package.json frontend/pnpm-lock.yaml ./
+RUN npm install --global "$(node -p 'require("./package.json").packageManager')"
+RUN --mount=type=cache,id=vpnweb-pnpm,target=/pnpm/store \
+    pnpm install --frozen-lockfile --store-dir=/pnpm/store
 COPY frontend/ ./
-RUN npm run build
+RUN pnpm build
 
 FROM rust:1.100.0-slim-trixie AS backend
 WORKDIR /build

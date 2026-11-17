@@ -2,10 +2,13 @@ mod config;
 mod network;
 mod runtime;
 mod storage;
+mod tools;
 
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, Path, Query, Request, State, rejection::JsonRejection},
+    extract::{
+        DefaultBodyLimit, Path, Query, Request, State, WebSocketUpgrade, rejection::JsonRejection,
+    },
     http::{HeaderValue, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -119,8 +122,12 @@ async fn authorize(State(app): State<Arc<App>>, request: Request, next: Next) ->
         );
         return response;
     }
-    // Basic Auth 由浏览器自动携带；拒绝跨站写请求，避免外部页面操作管理服务。
-    if !matches!(request.method().as_str(), "GET" | "HEAD" | "OPTIONS") {
+    // Basic Auth 由浏览器自动携带；写请求和 WebSocket 均须校验来源。
+    let websocket = request
+        .headers()
+        .get("upgrade")
+        .is_some_and(|value| value.as_bytes().eq_ignore_ascii_case(b"websocket"));
+    if websocket || !matches!(request.method().as_str(), "GET" | "HEAD" | "OPTIONS") {
         let cross_site = request
             .headers()
             .get("sec-fetch-site")
@@ -266,6 +273,88 @@ async fn check_health(State(app): State<Arc<App>>) -> ApiResult<Json<Value>> {
     Ok(Json(runtime(&app, &["health"], None).await?))
 }
 
+#[derive(Deserialize)]
+struct PingInput {
+    host: String,
+}
+#[derive(Deserialize)]
+struct TcpPingInput {
+    host: String,
+    port: u16,
+}
+#[derive(Deserialize)]
+struct CurlInput {
+    url: String,
+    method: String,
+}
+
+fn invalid_tool_input(error: impl std::fmt::Display) -> ApiError {
+    ApiError(StatusCode::BAD_REQUEST, error.to_string())
+}
+
+async fn tool_vpn(app: &App) -> ApiResult<config::Vpn> {
+    let document = load_config(app).await?;
+    document
+        .profiles
+        .into_iter()
+        .find(|profile| profile.id == document.active_profile)
+        .map(|profile| profile.settings.vpn)
+        .ok_or_else(|| ApiError(StatusCode::CONFLICT, "请选择有效的 VPN 配置".into()))
+}
+
+async fn test_ping(
+    State(app): State<Arc<App>>,
+    Json(input): Json<PingInput>,
+) -> ApiResult<Json<Value>> {
+    let host = network::domain(&input.host).map_err(invalid_tool_input)?;
+    Ok(Json(tools::ping(&tool_vpn(&app).await?, &host).await))
+}
+
+async fn test_tcping(
+    State(app): State<Arc<App>>,
+    Json(input): Json<TcpPingInput>,
+) -> ApiResult<Json<Value>> {
+    let host = network::domain(&input.host).map_err(invalid_tool_input)?;
+    if input.port == 0 {
+        return Err(invalid_tool_input("TCP 端口必须为 1–65535"));
+    }
+    Ok(Json(
+        tools::tcping(&tool_vpn(&app).await?, &host, input.port).await,
+    ))
+}
+
+async fn test_curl(
+    State(app): State<Arc<App>>,
+    Json(input): Json<CurlInput>,
+) -> ApiResult<Json<Value>> {
+    if !matches!(input.method.as_str(), "GET" | "HEAD") {
+        return Err(invalid_tool_input("CURL 仅支持 GET 和 HEAD"));
+    }
+    let (host, _) = network::http_target(&input.url).map_err(invalid_tool_input)?;
+    network::domain(&host).map_err(invalid_tool_input)?;
+    Ok(Json(
+        tools::curl(&tool_vpn(&app).await?, &input.url, &input.method).await,
+    ))
+}
+
+#[derive(Deserialize)]
+struct TraceInput {
+    tool: tools::path_trace::Tool,
+    host: String,
+}
+
+async fn trace_path(
+    State(app): State<Arc<App>>,
+    Query(input): Query<TraceInput>,
+    websocket: WebSocketUpgrade,
+) -> ApiResult<Response> {
+    let host = network::domain(&input.host).map_err(invalid_tool_input)?;
+    let vpn = tool_vpn(&app).await?;
+    Ok(websocket
+        .on_upgrade(move |socket| tools::path_trace::run(socket, vpn, input.tool, host))
+        .into_response())
+}
+
 async fn healthz(State(app): State<Arc<App>>) -> (StatusCode, Json<Value>) {
     let result = tokio::time::timeout(
         Duration::from_millis(2500),
@@ -406,6 +495,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/apply", post(apply))
         .route("/dns", post(apply_dns))
         .route("/tools/dns", post(test_dns))
+        .route("/tools/ping", post(test_ping))
+        .route("/tools/tcping", post(test_tcping))
+        .route("/tools/curl", post(test_curl))
+        .route("/tools/trace", get(trace_path))
         .route("/health", post(check_health))
         .route("/profiles", post(create_profile))
         .route("/profiles/{id}/activate", post(activate_profile))

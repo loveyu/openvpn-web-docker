@@ -8,6 +8,18 @@ import {
 } from "react";
 import { createRoot } from "react-dom/client";
 import {
+  HashRouter,
+  NavLink,
+  Navigate,
+  Route,
+  Routes,
+  useNavigate,
+  useParams,
+} from "react-router-dom";
+import { request } from "./api";
+import { NetworkProbes } from "./NetworkProbes";
+import { TraceProbe } from "./TraceProbe";
+import {
   Activity,
   ArrowDownToLine,
   ArrowRight,
@@ -20,6 +32,8 @@ import {
   LayoutDashboard,
   LoaderCircle,
   LockKeyhole,
+  Monitor,
+  Moon,
   Network,
   Play,
   Plus,
@@ -30,6 +44,7 @@ import {
   Settings2,
   ShieldCheck,
   Square,
+  Sun,
   Terminal,
   Upload,
   X,
@@ -47,14 +62,7 @@ import type {
 import "./style.css";
 
 type Tab =
-  | "overview"
-  | "vpn"
-  | "http"
-  | "socks5"
-  | "sshd"
-  | "logs"
-  | "health"
-  | "tools";
+  "overview" | "vpn" | "http" | "socks5" | "sshd" | "logs" | "health" | "tools";
 const nav = [
   {
     id: "overview",
@@ -85,7 +93,7 @@ const descriptions: Record<Tab, string> = {
   sshd: "按需启用安全终端和端口转发，支持密码与公钥登录。",
   logs: "查看各服务的近期输出，定位连接与配置问题。",
   health: "分别查看容器与 OpenVPN 健康状态，配置隧道探测与自动恢复。",
-  tools: "用全部 HTTPDNS 与 VPN DNS 对比域名解析结果。",
+  tools: "选择网络工具，检查连通性、HTTP 响应、路由路径与 DNS 解析。",
 };
 
 const vpnHealthLabels: Record<VpnHealth["state"], string> = {
@@ -102,21 +110,6 @@ const healthActionLabels: Record<Config["health"]["action"], string> = {
   restart: "重启 OpenVPN 服务",
   reapply: "重新应用 VPN 配置并重连",
 };
-
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`/api${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...init?.headers,
-    },
-  });
-  const body = await response.json();
-  if (!response.ok) {
-    throw new Error(body.error ?? body.message ?? "请求失败");
-  }
-  return body;
-}
 
 function Field({
   label,
@@ -303,14 +296,69 @@ function DnsTable({ rows }: { rows: DnsResult[] }) {
   );
 }
 
-function App() {
-  const [tab, setTab] = useState<Tab>("overview");
+type Theme = "system" | "light" | "dark";
+
+function ThemeSwitcher() {
+  const [theme, setTheme] = useState<Theme>(
+    () => (document.documentElement.dataset.theme as Theme) || "system",
+  );
+  const options = [
+    { value: "system", label: "跟随系统", icon: Monitor },
+    { value: "light", label: "亮色模式", icon: Sun },
+    { value: "dark", label: "暗色模式", icon: Moon },
+  ] as const;
+
+  return (
+    <div className="theme-switcher" role="group" aria-label="外观模式">
+      {options.map(({ value, label, icon: Icon }) => (
+        <button
+          key={value}
+          type="button"
+          title={label}
+          aria-label={label}
+          aria-pressed={theme === value}
+          onClick={() => {
+            setTheme(value);
+            document.documentElement.dataset.theme = value;
+            try {
+              localStorage.setItem("vpnweb-theme", value);
+            } catch {
+              // 本地存储不可用时，当前页面的主题选择仍然生效。
+            }
+          }}
+        >
+          <Icon size={18} />
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function App({ tab }: { tab: Tab }) {
+  const navigate = useNavigate();
+  const { tool: requestedTool = "" } = useParams();
+  const selectedTool = [
+    "ping",
+    "tcping",
+    "curl",
+    "dns",
+    "mtr",
+    "traceroute",
+  ].includes(requestedTool)
+    ? requestedTool
+    : "";
+  const setTab = (value: Tab) => navigate(`/${value}`);
   const [documentConfig, setDocumentConfig] = useState<ConfigDocument>();
   const profile = documentConfig?.profiles.find(
     (item) => item.id === documentConfig.active_profile,
   );
   const config = profile?.settings;
   const [newProfile, setNewProfile] = useState(false);
+  const authHelp = useRef<HTMLDialogElement>(null);
+  // 部署配置不是登录表单，仅在获焦时开放编辑，避免浏览器回填管理凭据。
+  const [sshCredentialFocus, setSshCredentialFocus] = useState<
+    "username" | "password"
+  >();
   const [newProfileName, setNewProfileName] = useState("");
   const [dnsDomain, setDnsDomain] = useState("example.com");
   const [dnsResults, setDnsResults] = useState<DnsResults>();
@@ -468,14 +516,7 @@ function App() {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <a
-          className="brand"
-          href="#"
-          onClick={(event) => {
-            event.preventDefault();
-            setTab("overview");
-          }}
-        >
+        <NavLink className="brand" to="/overview">
           <div className="brand-icon">
             <ShieldCheck size={25} />
           </div>
@@ -484,21 +525,21 @@ function App() {
               OpenVPN<span>WEB CONSOLE</span>
             </strong>
           </div>
-        </a>
+        </NavLink>
         <nav aria-label="主导航">
           {nav.map((item) => (
             <div key={item.id}>
               {"group" in item && <div className="nav-group">{item.group}</div>}
-              <button
+              <NavLink
+                to={`/${item.id}`}
                 className={`nav-item ${tab === item.id ? "selected" : ""}`}
                 aria-label={item.label}
                 title={item.label}
-                onClick={() => setTab(item.id)}
               >
                 <item.icon size={18} />
                 <span className="nav-label">{item.label}</span>
                 {tab === item.id && <ChevronRight size={15} />}
-              </button>
+              </NavLink>
             </div>
           ))}
         </nav>
@@ -511,10 +552,15 @@ function App() {
             </div>
             <span className="version">v{status?.version ?? "0.1.0"}</span>
           </div>
-          <div className="auth-note">
+          <button
+            type="button"
+            className="auth-note"
+            onClick={() => authHelp.current?.showModal()}
+            aria-label="Basic Auth 设置说明"
+          >
             <LockKeyhole size={13} />
             Basic Auth · {status?.basic_auth_enabled ? "已启用" : "未设置"}
-          </div>
+          </button>
         </div>
       </aside>
       <div className="workspace">
@@ -525,6 +571,15 @@ function App() {
             <span>{currentNav.label}</span>
           </div>
           <div className="topbar-right">
+            <button
+              type="button"
+              className="button auth-help-mobile"
+              onClick={() => authHelp.current?.showModal()}
+              aria-label="Basic Auth 设置说明"
+              title="Basic Auth 设置说明"
+            >
+              <LockKeyhole size={18} />
+            </button>
             <span className="live-dot" />
             <select
               aria-label="切换 VPN 配置"
@@ -568,6 +623,7 @@ function App() {
               新增配置
             </button>
           </div>
+          <ThemeSwitcher />
         </header>
         <main>
           <div className="page-heading">
@@ -576,22 +632,24 @@ function App() {
               <h1>{currentNav.label}</h1>
               <p>{descriptions[tab]}</p>
             </div>
-            <div className="heading-actions">
-              {dirty && <span className="unsaved">未保存的更改</span>}
-              <button
-                className="button"
-                disabled={busy || !config}
-                onClick={() =>
-                  void execute(async () => {
-                    await save();
-                    notify("配置已保存");
-                  })
-                }
-              >
-                <Save size={15} />
-                保存配置
-              </button>
-            </div>
+            {tab !== "tools" && (
+              <div className="heading-actions">
+                {dirty && <span className="unsaved">未保存的更改</span>}
+                <button
+                  className="button"
+                  disabled={busy || !config}
+                  onClick={() =>
+                    void execute(async () => {
+                      await save();
+                      notify("配置已保存");
+                    })
+                  }
+                >
+                  <Save size={15} />
+                  保存配置
+                </button>
+              </div>
+            )}
           </div>
           {!config ? (
             <div className="empty-state">
@@ -807,19 +865,32 @@ function App() {
                   </Panel>
                   <Panel
                     title="当前监听端口"
-                    description="容器端口固定为 Web 80、HTTP 8888、SOCKS5 1080、SSH 22；宿主机端口由 Docker 映射配置。"
+                    description="自动检测各服务的容器内监听端口；服务未监听时显示预设端口。宿主机映射由部署配置提供。"
                   >
                     <div className="port-grid">
                       {status?.ports.map((item) => {
                         return (
                           <div className="port-card" key={item.name}>
                             <span>{names[item.name]}</span>
+                            <span className="port-label">容器端口</span>
                             <strong className="mono">:{item.port}</strong>
                             <small
                               className={item.listening ? "mint" : "muted"}
                             >
                               {item.listening ? "正在监听" : "未监听"}
                             </small>
+                            <div className="port-mapping">
+                              {item.published_port ? (
+                                <>
+                                  <span>宿主机映射</span>
+                                  <code>:{item.published_port}</code>
+                                  <ArrowRight size={14} aria-hidden="true" />
+                                  <code>:{item.target_port}</code>
+                                </>
+                              ) : (
+                                <span>宿主机映射未提供</span>
+                              )}
+                            </div>
                           </div>
                         );
                       })}
@@ -929,8 +1000,7 @@ function App() {
                               update("vpn", {
                                 ...config.vpn,
                                 selection_mode: event.target.value as
-                                  | "auto"
-                                  | "manual",
+                                  "auto" | "manual",
                               })
                             }
                           >
@@ -1057,8 +1127,7 @@ function App() {
                                         ? {
                                             ...value,
                                             protocol: event.target.value as
-                                              | "udp"
-                                              | "tcp",
+                                              "udp" | "tcp",
                                           }
                                         : value,
                                   ),
@@ -1277,8 +1346,7 @@ function App() {
                               update("vpn", {
                                 ...config.vpn,
                                 dns_mode: event.target.value as
-                                  | "manual"
-                                  | "pushed",
+                                  "manual" | "pushed",
                               })
                             }
                           >
@@ -1404,8 +1472,7 @@ function App() {
                               update("vpn", {
                                 ...config.vpn,
                                 httpdns_protocol: event.target.value as
-                                  | "doh"
-                                  | "json",
+                                  "doh" | "json",
                               })
                             }
                           >
@@ -1545,7 +1612,11 @@ function App() {
                   title="SSH 服务配置"
                   description="支持终端、SFTP、TCP 转发与 TUN 转发；容器端口固定为 22，默认关闭"
                 >
-                  <div className="panel-body">
+                  <form
+                    className="panel-body"
+                    autoComplete="off"
+                    onSubmit={(event) => event.preventDefault()}
+                  >
                     <Toggle
                       label="启用 SSH 访问"
                       checked={config.sshd.enabled}
@@ -1557,7 +1628,11 @@ function App() {
                     <div className="form-grid">
                       <Field label="登录用户名">
                         <input
+                          name="ssh-service-user"
                           autoComplete="off"
+                          readOnly={sshCredentialFocus !== "username"}
+                          onFocus={() => setSshCredentialFocus("username")}
+                          onBlur={() => setSshCredentialFocus(undefined)}
                           value={config.sshd.username}
                           onChange={(event) =>
                             update("sshd", {
@@ -1573,8 +1648,12 @@ function App() {
                         wide
                       >
                         <input
+                          name="ssh-service-password"
                           type="password"
                           autoComplete="new-password"
+                          readOnly={sshCredentialFocus !== "password"}
+                          onFocus={() => setSshCredentialFocus("password")}
+                          onBlur={() => setSshCredentialFocus(undefined)}
                           value={config.sshd.password}
                           onChange={(event) =>
                             update("sshd", {
@@ -1585,13 +1664,14 @@ function App() {
                         />
                       </Field>
                       <Field
-                        label="SSH 公钥（可选）"
-                        help="每行一个 authorized_keys 公钥，请勿填写私钥。"
+                        label="SSH 公钥（支持多个，可选）"
+                        help="可粘贴多个公钥，每行一个，均可用于此用户登录。请勿填写私钥。"
                         wide
                       >
                         <textarea
                           className="mono"
                           rows={6}
+                          autoComplete="off"
                           spellCheck={false}
                           value={config.sshd.authorized_keys}
                           onChange={(event) =>
@@ -1600,7 +1680,9 @@ function App() {
                               authorized_keys: event.target.value,
                             })
                           }
-                          placeholder="ssh-ed25519 AAAA… user@device"
+                          placeholder={
+                            "ssh-ed25519 AAAA… user@laptop\nssh-ed25519 AAAA… user@phone"
+                          }
                         />
                       </Field>
                     </div>
@@ -1612,7 +1694,7 @@ function App() {
                         update("sshd", { ...config.sshd, sudo })
                       }
                     />
-                  </div>
+                  </form>
                   {footer("sshd")}
                 </Panel>
               )}
@@ -1794,8 +1876,7 @@ function App() {
                                   update("health", {
                                     ...config.health,
                                     http_method: event.target.value as
-                                      | "GET"
-                                      | "HEAD",
+                                      "GET" | "HEAD",
                                   })
                                 }
                               >
@@ -1930,66 +2011,116 @@ function App() {
               )}
               {tab === "tools" && (
                 <>
+                  {requestedTool && !selectedTool && (
+                    <Navigate to="/tools" replace />
+                  )}
                   <Panel
-                    title="DNS 解析对比"
-                    description="并行测试全部预设 HTTPDNS、自定义 HTTPDNS、VPN 下发和手动配置的 DNS；展示每个直连 IP 的结果。"
+                    title="选择网络工具"
+                    description="选择要使用的工具，开始诊断容器网络。"
                   >
-                    <form
-                      className="panel-body dns-query"
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        void execute(async () => {
-                          setDnsResults(
-                            await request<DnsResults>("/tools/dns", {
-                              method: "POST",
-                              body: JSON.stringify({ domain: dnsDomain }),
-                            }),
-                          );
-                          notify("全部 DNS 测试已完成");
-                        });
-                      }}
-                    >
-                      <Field
-                        label="待解析域名"
-                        help="仅输入域名，例如 example.com。"
-                      >
-                        <input
-                          required
-                          value={dnsDomain}
-                          onChange={(event) => setDnsDomain(event.target.value)}
-                          placeholder="example.com"
-                        />
+                    <div className="panel-body">
+                      <Field label="网络工具">
+                        <select
+                          value={selectedTool}
+                          onChange={(event) =>
+                            navigate(
+                              event.target.value
+                                ? `/tools/${event.target.value}`
+                                : "/tools",
+                            )
+                          }
+                        >
+                          <option value="">请选择工具</option>
+                          <option value="ping">Ping · ICMP 连通性</option>
+                          <option value="tcping">TCPing · TCP 端口探测</option>
+                          <option value="curl">
+                            CURL · HTTP 请求与图片预览
+                          </option>
+                          <option value="dns">DNS · 域名解析对比</option>
+                          <option value="mtr">MTR · 持续路由探测</option>
+                          <option value="traceroute">
+                            Traceroute · 路由追踪
+                          </option>
+                        </select>
                       </Field>
-                      <button className="button primary" disabled={busy}>
-                        <Network size={16} />
-                        {busy ? "测试中…" : "测试全部 DNS"}
-                      </button>
-                    </form>
+                    </div>
                   </Panel>
-                  {dnsResults && (
+                  {(selectedTool === "ping" ||
+                    selectedTool === "tcping" ||
+                    selectedTool === "curl") && (
+                    <NetworkProbes key={selectedTool} tool={selectedTool} />
+                  )}
+                  {(selectedTool === "mtr" ||
+                    selectedTool === "traceroute") && (
+                    <TraceProbe key={selectedTool} tool={selectedTool} />
+                  )}
+                  {selectedTool === "dns" && (
                     <>
                       <Panel
-                        title={`HTTPDNS · ${dnsResults.domain}`}
-                        description="固定 IP 直连；按耗时展示，可直接比较成功、失败与返回地址。"
+                        title="DNS 解析对比"
+                        description="并行测试全部预设 HTTPDNS、自定义 HTTPDNS、VPN 下发和手动配置的 DNS；展示每个直连 IP 的结果。"
                       >
-                        <DnsTable rows={dnsResults.httpdns} />
+                        <form
+                          className="panel-body dns-query"
+                          onSubmit={(event) => {
+                            event.preventDefault();
+                            void execute(async () => {
+                              setDnsResults(
+                                await request<DnsResults>("/tools/dns", {
+                                  method: "POST",
+                                  body: JSON.stringify({ domain: dnsDomain }),
+                                }),
+                              );
+                              notify("全部 DNS 测试已完成");
+                            });
+                          }}
+                        >
+                          <Field
+                            label="待解析域名"
+                            help="仅输入域名，例如 example.com。"
+                          >
+                            <input
+                              required
+                              value={dnsDomain}
+                              onChange={(event) =>
+                                setDnsDomain(event.target.value)
+                              }
+                              placeholder="example.com"
+                            />
+                          </Field>
+                          <button className="button primary" disabled={busy}>
+                            <Network size={16} />
+                            {busy ? "测试中…" : "测试全部 DNS"}
+                          </button>
+                        </form>
                       </Panel>
-                      <Panel
-                        title="VPN DNS"
-                        description="包含服务器下发、手动指定与当前生效的 DNS；失败时显示具体原因。"
-                      >
-                        <DnsTable rows={dnsResults.vpn_dns} />
-                      </Panel>
+                      {dnsResults && (
+                        <>
+                          <Panel
+                            title={`HTTPDNS · ${dnsResults.domain}`}
+                            description="固定 IP 直连；按耗时展示，可直接比较成功、失败与返回地址。"
+                          >
+                            <DnsTable rows={dnsResults.httpdns} />
+                          </Panel>
+                          <Panel
+                            title="VPN DNS"
+                            description="包含服务器下发、手动指定与当前生效的 DNS；失败时显示具体原因。"
+                          >
+                            <DnsTable rows={dnsResults.vpn_dns} />
+                          </Panel>
+                        </>
+                      )}
+                      {!dnsResults && (
+                        <div className="note">
+                          <CircleHelp size={18} />
+                          <p>
+                            HTTPDNS 不依赖容器 DNS。VPN DNS
+                            需要隧道连接且服务器可达，测试不会修改当前 DNS
+                            设置。
+                          </p>
+                        </div>
+                      )}
                     </>
-                  )}
-                  {!dnsResults && (
-                    <div className="note">
-                      <CircleHelp size={18} />
-                      <p>
-                        HTTPDNS 不依赖容器 DNS。VPN DNS
-                        需要隧道连接且服务器可达，测试不会修改当前 DNS 设置。
-                      </p>
-                    </div>
                   )}
                 </>
               )}
@@ -2052,6 +2183,49 @@ function App() {
           </footer>
         </main>
       </div>
+      <dialog
+        className="modal auth-dialog"
+        ref={authHelp}
+        aria-labelledby="auth-help-title"
+        onClick={(event) => {
+          if (event.target === event.currentTarget) event.currentTarget.close();
+        }}
+      >
+        <h2 id="auth-help-title" tabIndex={-1} autoFocus>
+          设置 Basic Auth
+        </h2>
+        <p>
+          建议在项目根目录的 <code>.env</code>{" "}
+          文件中设置管理用户名和密码。首次使用可复制 <code>.env.example</code>
+          ，已有文件直接编辑。
+        </p>
+        <pre className="logs probe-output">
+          {"ADMIN_USERNAME=admin\nADMIN_PASSWORD='请替换为强密码'"}
+        </pre>
+        <p>保存后，在项目目录重新创建容器使配置生效：</p>
+        <pre className="logs probe-output">
+          docker compose up -d --force-recreate openvpn-web
+        </pre>
+        <p>
+          使用 <code>docker run</code> 时，也可以添加以下 <code>-e</code>{" "}
+          参数，并在修改后重新创建容器：
+        </p>
+        <pre className="logs probe-output">
+          {"-e ADMIN_USERNAME=admin \\\n-e ADMIN_PASSWORD='请替换为强密码'"}
+        </pre>
+        <p>
+          用户名和密码必须同时设置。启用后，浏览器会弹出登录框；API
+          请求需要携带同一组认证信息。仅重启容器不会更新环境变量。
+        </p>
+        <div className="modal-actions">
+          <button
+            className="button primary"
+            onClick={() => authHelp.current?.close()}
+          >
+            知道了
+          </button>
+        </div>
+      </dialog>
       {newProfile && (
         <div className="modal-overlay" role="presentation">
           <section
@@ -2062,7 +2236,7 @@ function App() {
           >
             <h2 id="new-profile-title">新增 VPN 配置</h2>
             <p>
-              新配置独立保存连接、端口、认证和健康检查。当前连接保持运行，选择新配置时才切换。
+              新配置独立保存连接、认证和健康检查。当前连接保持运行，选择新配置时才切换。
             </p>
             <form
               onSubmit={(event) => {
@@ -2126,6 +2300,18 @@ function App() {
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <App />
+    <HashRouter>
+      <Routes>
+        <Route path="/" element={<Navigate to="/overview" replace />} />
+        {nav.map(({ id }) => (
+          <Route
+            key={id}
+            path={id === "tools" ? "/tools/:tool?" : `/${id}`}
+            element={<App tab={id} />}
+          />
+        ))}
+        <Route path="*" element={<Navigate to="/overview" replace />} />
+      </Routes>
+    </HashRouter>
   </StrictMode>,
 );

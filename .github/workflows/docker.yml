@@ -35,16 +35,19 @@ jobs:
           cargo fmt --check
           cargo clippy --all-targets --locked -- -D warnings
           cargo test --locked
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: frontend/package.json
       - uses: actions/setup-node@v7
         with:
-          node-version: "26.13.1"
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          node-version-file: frontend/.node-version
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
       - name: Frontend build
         working-directory: frontend
         run: |
-          npm ci
-          npm run build
+          pnpm install --frozen-lockfile
+          pnpm build
 
   build:
     needs: check
