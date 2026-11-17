@@ -635,7 +635,7 @@ function App({ tab }: { tab: Tab }) {
                       </div>
                     </div>
                     <button
-                      className="button hero-button"
+                      className="button primary hero-button"
                       disabled={busy}
                       onClick={() =>
                         connected

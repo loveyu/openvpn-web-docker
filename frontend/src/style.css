@@ -7,7 +7,7 @@
   --text: light-dark(#1c303b, #dce4e5);
   --text-secondary: light-dark(#3e5663, #b9cbce);
   --text-muted: light-dark(#526b79, #9aafb9);
-  --text-subtle: light-dark(#607784, #8ca3af);
+  --text-subtle: light-dark(#586f7c, #8ca3af);
   --border: light-dark(#dce5ea, #293a43);
   --border-strong: light-dark(#b7c8d1, #425a65);
   --accent: light-dark(#17694e, #8ce3c3);
@@ -331,6 +331,13 @@ main {
 }
 .button.primary:hover:not(:disabled) {
   background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+.button:disabled {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+  color: var(--text-subtle);
+  opacity: 1;
 }
 .button.small {
   font-size: 14px;
@@ -399,12 +406,8 @@ main {
   max-width: 510px;
 }
 .hero-button {
-  background: var(--accent-solid);
-  color: var(--on-accent);
-  border-color: var(--accent-solid);
   z-index: 1;
   flex-shrink: 0;
-  font-weight: 600;
 }
 .hero-grid {
   position: absolute;
@@ -725,7 +728,7 @@ textarea::placeholder {
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: #9daeb4;
+  background: var(--text-muted);
   transition: transform 0.18s;
 }
 .toggle.on {
@@ -949,10 +952,6 @@ code,
   min-width: 0;
   width: 100%;
   padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--field-bg);
-  color: var(--text);
 }
 .drag-handle {
   cursor: grab;
