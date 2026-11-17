@@ -1,7 +1,7 @@
 use crate::{config::Vpn, network};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
-use std::{net::Ipv4Addr, process::Output, time::Instant};
+use std::{net::Ipv4Addr, time::Instant};
 
 pub mod path_trace;
 
@@ -30,39 +30,6 @@ fn trace(bytes: &[u8]) -> String {
         "{}\n…中间日志已省略…\n{}",
         String::from_utf8_lossy(&bytes[..LIMIT / 2]),
         String::from_utf8_lossy(&bytes[bytes.len() - LIMIT / 2..])
-    )
-}
-
-fn command_result(
-    target: &str,
-    ip: Ipv4Addr,
-    start: Instant,
-    result: network::Result<Output>,
-) -> Value {
-    match result {
-        Ok(output) => json!({"target":target,"ip":ip,"ok":output.status.success(),
-            "elapsed_ms":start.elapsed().as_secs_f64()*1000.0,"exit_code":output.status.code(),
-            "stdout":trace(&output.stdout),"stderr":trace(&output.stderr)}),
-        Err(error) => failure(target, start, error),
-    }
-}
-
-pub async fn ping(vpn: &Vpn, host: &str) -> Value {
-    let start = Instant::now();
-    let ip = match address(vpn, host).await {
-        Ok(ip) => ip,
-        Err(error) => return failure(host, start, error),
-    };
-    let args = ["-n", "-c", "4", "-W", "2", "-w", "10"]
-        .map(str::to_owned)
-        .into_iter()
-        .chain([ip.to_string()])
-        .collect::<Vec<_>>();
-    command_result(
-        host,
-        ip,
-        start,
-        network::output("ping", &args, None, 12).await,
     )
 }
 

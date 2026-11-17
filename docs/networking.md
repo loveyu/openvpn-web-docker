@@ -16,11 +16,11 @@ OpenVPN 连接及重连时由 Rust hook 收集
 
 网络工具页可输入域名，一次并行测试全部 HTTPDNS 直连 IP、自定义 HTTPDNS、VPN 下发 DNS 和手动 DNS，逐项显示答案、耗时与错误。VPN DNS 需要相应地址可达。
 
-网络工具页还提供 Ping（4 次 ICMP）、TCPing（5 秒 TCP 连接超时）和 CURL GET/HEAD 探测。CURL 使用
+网络工具页还提供 Ping（持续 ICMP，最多 60 秒）、TCPing（5 秒 TCP 连接超时）和 CURL GET/HEAD 探测。CURL 使用
 `-vvv`，展示响应内容、响应头、连接详情、HTTP 状态和耗时；GET 单独展示响应头，图片响应直接预览，HEAD 只展示响应头。CURL 单次请求最多 20 秒、正文最多 2 MiB，详细日志保留前后共 64 KiB。工具不保存配置，不需要“保存配置”操作；探测从容器发起并遵循当前出口保护规则，域名经所配置的 HTTPDNS 解析。
 
-MTR 和 Traceroute 通过同源 WebSocket 连接探测，由服务端每 2 秒推送累计结果，完成后发送最终结果并关闭连接，单次最多 60 秒（含目标解析）。两者均关闭域名反解析；MTR 展示每跳 IP、发送与回包数、未回包比例和延迟，Traceroute 展示路由追踪输出。暂停仅冻结前端展示，后端继续运行；恢复时显示最新结果。终止、切换工具或离开页面会关闭连接，服务端同时终止探测及其子进程。反向代理需要支持
-`/api/tools/trace` 的 WebSocket Upgrade。
+Ping、MTR 和 Traceroute 通过同源 WebSocket 连接探测，由服务端每 2 秒推送累计结果，完成后发送最终结果并关闭连接，单次最多 60 秒（含目标解析）。三者均关闭域名反解析；Ping 每秒发送一次 ICMP 请求，输出自动滚动到底部；MTR 展示每跳 IP、发送与回包数、未回包比例和延迟，Traceroute 展示路由追踪输出。暂停仅冻结前端展示，后端继续运行；恢复时显示最新结果。终止、切换工具或离开页面会关闭连接，服务端同时终止探测及其子进程。反向代理需要支持
+`/api/tools/ping?host=目标` 和 `/api/tools/trace?tool=mtr或traceroute&host=目标` 的 WebSocket Upgrade。
 
 ## 出口保护与参数边界
 

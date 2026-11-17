@@ -304,10 +304,16 @@ async fn tool_vpn(app: &App) -> ApiResult<config::Vpn> {
 
 async fn test_ping(
     State(app): State<Arc<App>>,
-    Json(input): Json<PingInput>,
-) -> ApiResult<Json<Value>> {
+    Query(input): Query<PingInput>,
+    websocket: WebSocketUpgrade,
+) -> ApiResult<Response> {
     let host = network::domain(&input.host).map_err(invalid_tool_input)?;
-    Ok(Json(tools::ping(&tool_vpn(&app).await?, &host).await))
+    let vpn = tool_vpn(&app).await?;
+    Ok(websocket
+        .on_upgrade(move |socket| {
+            tools::path_trace::run(socket, vpn, tools::path_trace::Tool::Ping, host)
+        })
+        .into_response())
 }
 
 async fn test_tcping(
@@ -495,7 +501,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/apply", post(apply))
         .route("/dns", post(apply_dns))
         .route("/tools/dns", post(test_dns))
-        .route("/tools/ping", post(test_ping))
+        .route("/tools/ping", get(test_ping))
         .route("/tools/tcping", post(test_tcping))
         .route("/tools/curl", post(test_curl))
         .route("/tools/trace", get(trace_path))

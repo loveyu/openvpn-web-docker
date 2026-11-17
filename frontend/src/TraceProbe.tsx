@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Network, Pause, Play, Square } from "lucide-react";
 
-type TraceTool = "mtr" | "traceroute";
+type TraceTool = "ping" | "mtr" | "traceroute";
 interface Snapshot {
   tool: TraceTool;
   target: string;
@@ -97,7 +97,7 @@ function MtrTable({ output }: { output: string }) {
 }
 
 export function TraceProbe({ tool }: { tool: TraceTool }) {
-  const name = tool === "mtr" ? "MTR" : "Traceroute";
+  const name = tool === "ping" ? "Ping" : tool === "mtr" ? "MTR" : "Traceroute";
   const [host, setHost] = useState("1.1.1.1");
   const [phase, setPhase] = useState<
     "idle" | "connecting" | "running" | "done" | "stopped" | "error"
@@ -109,7 +109,16 @@ export function TraceProbe({ tool }: { tool: TraceTool }) {
   const latestRef = useRef<Snapshot | undefined>(undefined);
   const pausedRef = useRef(false);
   const finishedRef = useRef(false);
+  const outputRef = useRef<HTMLPreElement>(null);
+  const diagnosticsRef = useRef<HTMLPreElement>(null);
   const active = phase === "connecting" || phase === "running";
+
+  useEffect(() => {
+    if (tool !== "ping") return;
+    for (const element of [outputRef.current, diagnosticsRef.current]) {
+      if (element) element.scrollTop = element.scrollHeight;
+    }
+  }, [tool, snapshot?.stdout, snapshot?.stderr]);
 
   useEffect(
     () => () => {
@@ -129,9 +138,14 @@ export function TraceProbe({ tool }: { tool: TraceTool }) {
     setPaused(false);
     setError("");
     setPhase("connecting");
-    const url = new URL("/api/tools/trace", window.location.href);
+    const url = new URL(
+      tool === "ping" ? "/api/tools/ping" : "/api/tools/trace",
+      window.location.href,
+    );
     url.protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    url.search = new URLSearchParams({ tool, host: host.trim() }).toString();
+    const params = new URLSearchParams({ host: host.trim() });
+    if (tool !== "ping") params.set("tool", tool);
+    url.search = params.toString();
     const socket = new WebSocket(url);
     socketRef.current = socket;
     socket.addEventListener("open", () => {
@@ -275,14 +289,20 @@ export function TraceProbe({ tool }: { tool: TraceTool }) {
                 </p>
               </>
             )}
-            <details open={tool === "traceroute"}>
-              <summary>{tool === "mtr" ? "MTR 原始输出" : "路由追踪结果"}</summary>
-              <pre className="logs probe-output">{snapshot.stdout || "等待探测结果…"}</pre>
+            <details open={tool !== "mtr"}>
+              <summary>
+                {tool === "ping" ? "Ping 结果" : tool === "mtr" ? "MTR 原始输出" : "路由追踪结果"}
+              </summary>
+              <pre className="logs probe-output" ref={outputRef}>
+                {snapshot.stdout || "等待探测结果…"}
+              </pre>
             </details>
             {snapshot.stderr && (
               <details open>
                 <summary>诊断日志</summary>
-                <pre className="logs probe-output">{snapshot.stderr}</pre>
+                <pre className="logs probe-output" ref={diagnosticsRef}>
+                  {snapshot.stderr}
+                </pre>
               </details>
             )}
           </>

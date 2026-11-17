@@ -12,6 +12,7 @@ use tokio::{
 #[derive(Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Tool {
+    Ping,
     Mtr,
     Traceroute,
 }
@@ -130,6 +131,7 @@ pub async fn run(mut socket: WebSocket, vpn: Vpn, tool: Tool, target: String) {
     };
     snapshot.ip = Some(ip);
     let (program, args): (&str, &[&str]) = match tool {
+        Tool::Ping => ("ping", &["-n", "-O", "-i", "1", "-W", "2"]),
         Tool::Mtr => (
             "mtr",
             &[

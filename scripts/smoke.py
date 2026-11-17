@@ -6,6 +6,7 @@ import base64
 import copy
 import json
 import secrets
+import socket
 import subprocess
 import tempfile
 import time
@@ -78,6 +79,38 @@ def main(image):
                 return response.status
         except urllib.error.HTTPError as error:
             return error.code
+
+    def ping_snapshots():
+        port = host_port(80)
+        with (
+            socket.create_connection(("127.0.0.1", int(port)), timeout=5) as connection,
+            connection.makefile("rb") as incoming,
+        ):
+            request = (
+                f"GET /api/tools/ping?host=10.77.0.1 HTTP/1.1\r\n"
+                f"Host: 127.0.0.1:{port}\r\n"
+                f"Origin: http://127.0.0.1:{port}\r\n"
+                f"Authorization: {authorization}\r\n"
+                "Connection: Upgrade\r\nUpgrade: websocket\r\n"
+                "Sec-WebSocket-Version: 13\r\n"
+                f"Sec-WebSocket-Key: {base64.b64encode(secrets.token_bytes(16)).decode()}\r\n\r\n"
+            )
+            connection.sendall(request.encode())
+            assert incoming.readline().split()[1] == b"101", "Ping WebSocket 升级失败"
+            while incoming.readline().strip():
+                pass
+            while True:
+                header = incoming.read(2)
+                assert len(header) == 2, "Ping 未发送完成状态就断开连接"
+                length = header[1] & 127
+                if length in (126, 127):
+                    length = int.from_bytes(incoming.read(2 if length == 126 else 8), "big")
+                payload = incoming.read(length)
+                assert header[0] == 0x81, "Ping 应发送完整的文本帧"
+                snapshot = json.loads(payload)
+                yield snapshot
+                if snapshot["done"]:
+                    return
 
     def container(*args, check=True):
         return run("docker", "exec", client, *args, check=check)
@@ -479,7 +512,13 @@ http.server.ThreadingHTTPServer(("0.0.0.0", 18080), Handler).serve_forever()
                 "✓ DNS 热更新不重启 VPN、全部 DNS 工具、Ping/TCP/HTTP 与 HEAD 健康检查", flush=True
             )
 
-            assert api("/tools/ping", "POST", {"host": "10.77.0.1"})["ok"]
+            snapshots = list(ping_snapshots())
+            assert any(
+                not snapshot["done"] and "time=" in snapshot["stdout"] for snapshot in snapshots
+            ), "Ping 未实时推送 ICMP 回包"
+            assert snapshots[-1]["timed_out"] and 59000 <= snapshots[-1]["elapsed_ms"] < 65000, (
+                "Ping 未按 60 秒上限停止"
+            )
             assert api("/tools/tcping", "POST", {"host": "target.test", "port": 18080})["ok"]
             assert not api("/tools/tcping", "POST", {"host": "10.77.0.1", "port": 1})["ok"]
             get = api("/tools/curl", "POST", {"url": "http://target.test:18080/", "method": "GET"})

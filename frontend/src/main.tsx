@@ -1968,12 +1968,12 @@ function App({ tab }: { tab: Tab }) {
                       </Field>
                     </div>
                   </Panel>
-                  {(selectedTool === "ping" ||
-                    selectedTool === "tcping" ||
-                    selectedTool === "curl") && (
+                  {(selectedTool === "tcping" || selectedTool === "curl") && (
                     <NetworkProbes key={selectedTool} tool={selectedTool} />
                   )}
-                  {(selectedTool === "mtr" || selectedTool === "traceroute") && (
+                  {(selectedTool === "ping" ||
+                    selectedTool === "mtr" ||
+                    selectedTool === "traceroute") && (
                     <TraceProbe key={selectedTool} tool={selectedTool} />
                   )}
                   {selectedTool === "dns" && (

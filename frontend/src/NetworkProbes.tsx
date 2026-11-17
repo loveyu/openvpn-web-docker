@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Activity, Globe2, Network } from "lucide-react";
+import { Globe2, Network } from "lucide-react";
 import { request } from "./api";
 
 interface ProbeResult {
@@ -74,13 +74,11 @@ function ProbeOutput({ result }: { result?: ProbeResult }) {
   );
 }
 
-export function NetworkProbes({ tool }: { tool: "ping" | "tcping" | "curl" }) {
-  const [pingHost, setPingHost] = useState("1.1.1.1");
+export function NetworkProbes({ tool }: { tool: "tcping" | "curl" }) {
   const [tcpHost, setTcpHost] = useState("example.com");
   const [tcpPort, setTcpPort] = useState(443);
   const [url, setUrl] = useState("https://example.com");
   const [method, setMethod] = useState<"GET" | "HEAD">("GET");
-  const [pingResult, setPingResult] = useState<ProbeResult>();
   const [tcpResult, setTcpResult] = useState<ProbeResult>();
   const [curlResult, setCurlResult] = useState<ProbeResult>();
   const [pending, setPending] = useState<string>();
@@ -114,43 +112,6 @@ export function NetworkProbes({ tool }: { tool: "ping" | "tcping" | "curl" }) {
 
   return (
     <>
-      {tool === "ping" && (
-        <section className="panel">
-          <div className="panel-head">
-            <div>
-              <h2>Ping</h2>
-              <p>发送 4 次 ICMP 请求，查看往返延迟与丢包。</p>
-            </div>
-            <Activity size={20} />
-          </div>
-          <form
-            className="panel-body probe-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void run("ping", { host: pingHost }, setPingResult);
-            }}
-          >
-            <label className="field">
-              <span>Ping 目标</span>
-              <input
-                required
-                value={pingHost}
-                onChange={(event) => setPingHost(event.target.value)}
-                placeholder="域名或 IPv4 地址"
-              />
-            </label>
-            <button className="button primary" disabled={!!pending}>
-              {pending === "ping" ? "探测中…" : "开始 Ping"}
-            </button>
-          </form>
-          {error?.tool === "ping" && (
-            <p className="probe-error probe-error-message" role="alert">
-              {error.message}
-            </p>
-          )}
-          <ProbeOutput result={pingResult} />
-        </section>
-      )}
       {tool === "tcping" && (
         <section className="panel">
           <div className="panel-head">
