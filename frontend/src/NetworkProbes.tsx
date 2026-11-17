@@ -22,14 +22,9 @@ function ProbeOutput({ result }: { result?: ProbeResult }) {
   if (!result) return null;
   return (
     <div className="probe-result">
-      <div
-        className={`probe-summary ${result.ok ? "mint" : "probe-error"}`}
-        role="status"
-      >
+      <div className={`probe-summary ${result.ok ? "mint" : "probe-error"}`} role="status">
         <strong>{result.ok ? "执行完成" : "执行失败"}</strong>
-        {result.status_code !== undefined && (
-          <span>HTTP {result.status_code}</span>
-        )}
+        {result.status_code !== undefined && <span>HTTP {result.status_code}</span>}
         <span>总耗时 {result.elapsed_ms.toFixed(1)} ms</span>
         {result.exit_code !== null && <span>退出码 {result.exit_code}</span>}
       </div>
@@ -40,9 +35,7 @@ function ProbeOutput({ result }: { result?: ProbeResult }) {
       {result.image_base64 ? (
         <figure className="probe-image">
           {imageError ? (
-            <p className="probe-error">
-              浏览器无法预览此图片，请结合响应头和诊断日志分析。
-            </p>
+            <p className="probe-error">浏览器无法预览此图片，请结合响应头和诊断日志分析。</p>
           ) : (
             <img
               src={`data:${result.content_type?.split(";")[0]};base64,${result.image_base64}`}
@@ -55,22 +48,14 @@ function ProbeOutput({ result }: { result?: ProbeResult }) {
       ) : (
         <details open>
           <summary>
-            {result.method === "HEAD"
-              ? "响应头"
-              : result.method
-                ? "响应内容"
-                : "命令输出"}
+            {result.method === "HEAD" ? "响应头" : result.method ? "响应内容" : "命令输出"}
           </summary>
-          <pre className="logs probe-output">
-            {result.stdout || "（无输出）"}
-          </pre>
+          <pre className="logs probe-output">{result.stdout || "（无输出）"}</pre>
         </details>
       )}
       {result.stderr && (
         <details open>
-          <summary>
-            {result.method ? "请求、响应头与连接详情（-vvv）" : "诊断日志"}
-          </summary>
+          <summary>{result.method ? "请求、响应头与连接详情（-vvv）" : "诊断日志"}</summary>
           <pre className="logs probe-output">{result.stderr}</pre>
         </details>
       )}
@@ -91,25 +76,25 @@ export function NetworkProbes({ tool }: { tool: "ping" | "tcping" | "curl" }) {
   const [error, setError] = useState<{ tool: string; message: string }>();
 
   async function run(
-    tool: string,
+    probeTool: string,
     input: object,
     setResult: (value: ProbeResult | undefined) => void,
   ) {
     if (pending) return;
-    setPending(tool);
+    setPending(probeTool);
     setError(undefined);
     setResult(undefined);
     try {
       setResult(
-        await request<ProbeResult>(`/tools/${tool}`, {
+        await request<ProbeResult>(`/tools/${probeTool}`, {
           method: "POST",
           body: JSON.stringify(input),
         }),
       );
-    } catch (error) {
+    } catch (requestError) {
       setError({
-        tool,
-        message: error instanceof Error ? error.message : "探测失败",
+        tool: probeTool,
+        message: requestError instanceof Error ? requestError.message : "探测失败",
       });
     } finally {
       setPending(undefined);
@@ -168,11 +153,7 @@ export function NetworkProbes({ tool }: { tool: "ping" | "tcping" | "curl" }) {
             className="panel-body probe-form"
             onSubmit={(event) => {
               event.preventDefault();
-              void run(
-                "tcping",
-                { host: tcpHost, port: tcpPort },
-                setTcpResult,
-              );
+              void run("tcping", { host: tcpHost, port: tcpPort }, setTcpResult);
             }}
           >
             <label className="field">
@@ -213,8 +194,7 @@ export function NetworkProbes({ tool }: { tool: "ping" | "tcping" | "curl" }) {
             <div>
               <h2>CURL</h2>
               <p>
-                GET / HEAD 探测，使用 -vvv 记录连接与响应详情。最多读取 2
-                MiB，单次请求最长 20 秒。
+                GET / HEAD 探测，使用 -vvv 记录连接与响应详情。最多读取 2 MiB，单次请求最长 20 秒。
               </p>
             </div>
             <Globe2 size={20} />
@@ -230,9 +210,7 @@ export function NetworkProbes({ tool }: { tool: "ping" | "tcping" | "curl" }) {
               <span>请求方法</span>
               <select
                 value={method}
-                onChange={(event) =>
-                  setMethod(event.target.value as "GET" | "HEAD")
-                }
+                onChange={(event) => setMethod(event.target.value as "GET" | "HEAD")}
               >
                 <option value="GET">GET</option>
                 <option value="HEAD">HEAD</option>
@@ -263,8 +241,8 @@ export function NetworkProbes({ tool }: { tool: "ping" | "tcping" | "curl" }) {
       <div className="note">
         <Network size={18} />
         <p>
-          探测从容器发起，遵循当前网络路由和出口保护规则。域名使用已配置的
-          HTTPDNS 解析，超时或拒绝连接会保留诊断结果。
+          探测从容器发起，遵循当前网络路由和出口保护规则。域名使用已配置的 HTTPDNS
+          解析，超时或拒绝连接会保留诊断结果。
         </p>
       </div>
     </>

@@ -4,7 +4,8 @@
 
 ## 快速开始
 
-需要 Linux Docker Engine、Docker Compose 插件、`/dev/net/tun` 和内核 nftables 支持。使用独立 bridge 网络，不支持 host 模式或共享其他容器的网络命名空间。
+需要 Linux Docker Engine、Docker Compose 插件、`/dev/net/tun`
+和内核 nftables 支持。使用独立 bridge 网络，不支持 host 模式或共享其他容器的网络命名空间。
 
 在仓库根目录创建环境变量文件，已有 `.env` 时保留原配置：
 
@@ -25,9 +26,13 @@ ADMIN_PASSWORD='请替换为强密码'
 docker compose up -d --build
 ```
 
-访问 <http://127.0.0.1:18080>，使用上述凭据登录，在 OpenVPN 页面导入 `client.ovpn`、填写证书和凭据并连接。默认手动 DNS 为 `1.1.1.1`，请按 VPN 网络要求调整，或选择使用 OpenVPN 下发 DNS。
+访问 <http://127.0.0.1:18080>，使用上述凭据登录，在 OpenVPN 页面导入
+`client.ovpn`、填写证书和凭据并连接。默认手动 DNS 为
+`1.1.1.1`，请按 VPN 网络要求调整，或选择使用 OpenVPN 下发 DNS。
 
-HTTP 代理默认开启且无认证，地址为 `127.0.0.1:17888`；SOCKS5 和 SSH 默认关闭。示例端口仅绑定宿主机 `127.0.0.1`，配置持久化到 `./config`。管理用户名或密码修改后，执行 `docker compose up -d --force-recreate openvpn-web` 重新创建容器。
+HTTP 代理默认开启且无认证，地址为 `127.0.0.1:17888`；SOCKS5 和 SSH 默认关闭。示例端口仅绑定宿主机
+`127.0.0.1`，配置持久化到 `./config`。管理用户名或密码修改后，执行
+`docker compose up -d --force-recreate openvpn-web` 重新创建容器。
 
 Docker Run、端口映射、局域网访问和 GHCR 镜像用法见[部署与启动](docs/deployment.md)。
 

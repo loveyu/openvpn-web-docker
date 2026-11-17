@@ -30,11 +30,6 @@ jobs:
             ~/.cargo/git
             target
           key: rust-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
-      - name: Rust checks
-        run: |
-          cargo fmt --check
-          cargo clippy --all-targets --locked -- -D warnings
-          cargo test --locked
       - uses: pnpm/action-setup@v4
         with:
           package_json_file: frontend/package.json
@@ -43,11 +38,30 @@ jobs:
           node-version-file: frontend/.node-version
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
-      - name: Frontend build
-        working-directory: frontend
+      - name: Install quality tools
+        shell: bash
         run: |
-          pnpm install --frozen-lockfile
-          pnpm build
+          set -Eeuo pipefail
+          sudo -n -l
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends shellcheck shfmt
+          quality_dir="$RUNNER_TEMP/openvpn-web-quality"
+          python3 -m venv "$quality_dir"
+          "$quality_dir/bin/pip" install --disable-pip-version-check --no-cache-dir \
+            ruff==0.15.10 yamllint==1.37.1
+          echo "$quality_dir/bin" >> "$GITHUB_PATH"
+          curl --fail --silent --show-error --location \
+            https://github.com/tamasfe/taplo/releases/download/0.10.0/taplo-linux-x86_64.gz \
+            | gzip -d > "$quality_dir/taplo"
+          curl --fail --silent --show-error --location \
+            https://github.com/hadolint/hadolint/releases/download/v2.14.0/hadolint-Linux-x86_64 \
+            -o "$quality_dir/hadolint"
+          chmod +x "$quality_dir/taplo" "$quality_dir/hadolint"
+          echo "$quality_dir" >> "$GITHUB_PATH"
+      - name: Install frontend dependencies
+        run: pnpm --dir frontend install --frozen-lockfile --loglevel error
+      - name: Quality checks
+        run: ./scripts/check.sh
 
   build:
     needs: check

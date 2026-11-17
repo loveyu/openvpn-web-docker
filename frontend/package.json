@@ -8,7 +8,11 @@
     "node": "^22.12.0 || >=24.0.0"
   },
   "scripts": {
+    "check": "oxlint -D correctness -D suspicious --deny-warnings . && tsc --noEmit",
     "dev": "vite --host 127.0.0.1",
+    "format": "prettier --write 'src/**/*.{css,html,js,json,ts,tsx}' 'index.html' 'public/**/*.js' package.json tsconfig.json vite.config.ts",
+    "format:check": "prettier --check 'src/**/*.{css,html,js,json,ts,tsx}' 'index.html' 'public/**/*.js' package.json tsconfig.json vite.config.ts",
+    "lint": "oxlint -D correctness -D suspicious --deny-warnings .",
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 127.0.0.1"
   },
@@ -23,6 +27,8 @@
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.3.0",
+    "oxlint": "1.93.0",
+    "prettier": "3.10.1",
     "typescript": "7.0.2",
     "vite": "8.3.8"
   }

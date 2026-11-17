@@ -142,13 +142,7 @@ export interface Status {
 }
 
 export interface VpnHealth {
-  state:
-    | "unconfigured"
-    | "stopped"
-    | "connecting"
-    | "checking"
-    | "healthy"
-    | "unhealthy";
+  state: "unconfigured" | "stopped" | "connecting" | "checking" | "healthy" | "unhealthy";
   ok: boolean;
   healthy: boolean | null;
   errors: string[];

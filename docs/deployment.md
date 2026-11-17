@@ -2,7 +2,8 @@
 
 [返回项目首页](../README.md) · 本文命令默认在仓库根目录执行。
 
-需要 Linux Docker Engine、`/dev/net/tun` 和内核 nftables 支持；采用 Docker Compose 时还需 Compose 插件。使用独立 **bridge 网络，不支持 host 模式或共享其他容器的网络命名空间**；防火墙与路由只作用于本容器。
+需要 Linux Docker Engine、`/dev/net/tun` 和内核 nftables 支持；采用 Docker Compose 时还需 Compose 插件。使用独立
+**bridge 网络，不支持 host 模式或共享其他容器的网络命名空间**；防火墙与路由只作用于本容器。
 
 以下两种启动方式都需要先设置管理用户名和密码；示例中的密码请替换为自己的强密码。
 
@@ -27,7 +28,8 @@ ADMIN_PASSWORD='请替换为强密码'
 docker compose up -d --build
 ```
 
-修改用户名或密码后，执行 `docker compose up -d --force-recreate openvpn-web` 重新创建容器；仅执行 `docker compose restart` 不会更新环境变量。
+修改用户名或密码后，执行 `docker compose up -d --force-recreate openvpn-web` 重新创建容器；仅执行
+`docker compose restart` 不会更新环境变量。
 
 ## Docker Run
 
@@ -57,31 +59,45 @@ docker run -d --name openvpn-web --restart unless-stopped \
 
 两种方式任选其一。Docker Run 修改环境变量后也需要重新创建容器，挂载的 `config` 目录保留配置。
 
-访问 <http://127.0.0.1:18080>。在 OpenVPN 页面粘贴或导入 `client.ovpn`，填写证书、私钥及所需凭据，配置 endpoint 后点击“保存并连接”。默认手动 DNS 为 `1.1.1.1`，请按 VPN 网络要求修改，也可切换到“使用 OpenVPN 下发 DNS”。SOCKS5 和 SSH 默认关闭，在各自页面启用。
+访问 <http://127.0.0.1:18080>。在 OpenVPN 页面粘贴或导入
+`client.ovpn`，填写证书、私钥及所需凭据，配置 endpoint 后点击“保存并连接”。默认手动 DNS 为
+`1.1.1.1`，请按 VPN 网络要求修改，也可切换到“使用 OpenVPN 下发 DNS”。SOCKS5 和 SSH 默认关闭，在各自页面启用。
 
-| 服务 | 默认状态 | 容器端口 | 默认宿主机端口 |
-| --- | --- | --- | --- |
-| 管理页面 / API | 开启，按示例配置 Basic Auth | 80 | 18080 |
-| HTTP / HTTPS CONNECT | 开启，无认证 | 8888 | 17888 |
-| SOCKS5 TCP CONNECT | 关闭 | 1080 | 17080 |
-| SSH / SFTP / 转发 | 关闭 | 22 | 17222 |
+| 服务                 | 默认状态                    | 容器端口 | 默认宿主机端口 |
+| -------------------- | --------------------------- | -------- | -------------- |
+| 管理页面 / API       | 开启，按示例配置 Basic Auth | 80       | 18080          |
+| HTTP / HTTPS CONNECT | 开启，无认证                | 8888     | 17888          |
+| SOCKS5 TCP CONNECT   | 关闭                        | 1080     | 17080          |
+| SSH / SFTP / 转发    | 关闭                        | 22       | 17222          |
 
-示例默认绑定宿主机 `127.0.0.1`。局域网访问时，Compose 设置 `.env` 的 `BIND_ADDRESS`，Docker Run 修改 `-p` 的绑定地址。管理 Basic Auth 通过 `ADMIN_USERNAME`、`ADMIN_PASSWORD` 环境变量设置，两项必须同时提供，修改后重新创建容器。浏览器使用原生认证对话框，API 使用 `curl -u '用户名:密码'`；点击页面中的 Basic Auth 可查看设置说明。`/healthz` 供容器健康检查使用，不要求认证，不包含配置或密钥。
+示例默认绑定宿主机 `127.0.0.1`。局域网访问时，Compose 设置 `.env` 的 `BIND_ADDRESS`，Docker Run 修改
+`-p` 的绑定地址。管理 Basic Auth 通过 `ADMIN_USERNAME`、`ADMIN_PASSWORD`
+环境变量设置，两项必须同时提供，修改后重新创建容器。浏览器使用原生认证对话框，API 使用
+`curl -u '用户名:密码'`；点击页面中的 Basic Auth 可查看设置说明。`/healthz`
+供容器健康检查使用，不要求认证，不包含配置或密钥。
 
 ## 端口映射与 Docker 网络
 
 容器监听端口固定为 Web `80`、HTTP 代理 `8888`、SOCKS5 `1080`、SSH `22`。后台不提供端口调整，所有 VPN 配置使用相同监听端口。
 
-读取旧版 YAML 时会忽略已废弃的 `web` 和各服务 `port` 字段，下一次保存配置时移除这些字段；API 不再接受服务监听端口设置。
+读取旧版 YAML 时会忽略已废弃的 `web` 和各服务 `port`
+字段，下一次保存配置时移除这些字段；API 不再接受服务监听端口设置。
 
-宿主机端口由 Docker 映射决定。在 `.env` 设置 `WEB_PORT`、`HTTP_PROXY_PORT`、`SOCKS5_PORT`、`SSH_PORT`，或直接修改 `compose.yaml` 映射左侧；右侧保持容器固定端口。例如 Web 使用 `18080:80`，SSH 使用 `17222:22`。调整映射后执行 `docker compose up -d --force-recreate`。
+宿主机端口由 Docker 映射决定。在 `.env` 设置
+`WEB_PORT`、`HTTP_PROXY_PORT`、`SOCKS5_PORT`、`SSH_PORT`，或直接修改 `compose.yaml`
+映射左侧；右侧保持容器固定端口。例如 Web 使用 `18080:80`，SSH 使用 `17222:22`。调整映射后执行
+`docker compose up -d --force-recreate`。
 
-概览按服务及其子进程检测实际 TCP 监听端口，未监听时显示服务预设端口。Compose 使用同一组端口变量向后端传入 `PUBLISHED_WEB_PORT`、`PUBLISHED_HTTP_PORT`、`PUBLISHED_SOCKS5_PORT`、`PUBLISHED_SSH_PORT`，页面同时显示“宿主机端口 → 容器目标端口”。这些映射信息来自部署配置，容器不读取 Docker API。直接修改 Compose 的映射或使用 `docker run` 时，也应同步提供对应的 `PUBLISHED_*` 值；未提供时页面明确显示“宿主机映射未提供”。
+概览按服务及其子进程检测实际 TCP 监听端口，未监听时显示服务预设端口。Compose 使用同一组端口变量向后端传入
+`PUBLISHED_WEB_PORT`、`PUBLISHED_HTTP_PORT`、`PUBLISHED_SOCKS5_PORT`、`PUBLISHED_SSH_PORT`，页面同时显示“宿主机端口 → 容器目标端口”。这些映射信息来自部署配置，容器不读取 Docker API。直接修改 Compose 的映射或使用 `docker run` 时，也应同步提供对应的 `PUBLISHED_*`
+值；未提供时页面明确显示“宿主机映射未提供”。
 
-**不要设置 `network_mode: host`**。当前实现依赖独立网络命名空间、IPv4 默认网关、连接标记和策略路由；也不提供其他容器通过 IP 转发共享隧道的网关模式。
+**不要设置
+`network_mode: host`**。当前实现依赖独立网络命名空间、IPv4 默认网关、连接标记和策略路由；也不提供其他容器通过 IP 转发共享隧道的网关模式。
 
 ## 使用 GHCR 镜像
 
-首次成功发布后可在 `.env` 设置 `IMAGE=ghcr.io/<owner>/<repo>:latest`，执行 `docker compose pull` 和 `docker compose up -d --no-build`。
+首次成功发布后可在 `.env` 设置 `IMAGE=ghcr.io/<owner>/<repo>:latest`，执行 `docker compose pull` 和
+`docker compose up -d --no-build`。
 
 镜像构建、发布触发条件与仓库权限见[开发与验证](development.md#github-ci)。

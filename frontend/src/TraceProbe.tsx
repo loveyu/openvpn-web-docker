@@ -71,7 +71,7 @@ function MtrTable({ output }: { output: string }) {
         </thead>
         <tbody>
           {[...hops]
-            .sort(([a], [b]) => a - b)
+            .toSorted(([a], [b]) => a - b)
             .map(([hop, row]) => (
               <tr key={hop}>
                 <td>{hop + 1}</td>
@@ -85,11 +85,9 @@ function MtrTable({ output }: { output: string }) {
                     ? `${((Math.max(0, row.sent - row.received) / row.sent) * 100).toFixed(1)}%`
                     : "—"}
                 </td>
-                {[row.last, row.total / row.received, row.best, row.worst].map(
-                  (rtt, index) => (
-                    <td key={index}>{row.received ? rtt.toFixed(2) : "—"}</td>
-                  ),
-                )}
+                {[row.last, row.total / row.received, row.best, row.worst].map((rtt, index) => (
+                  <td key={index}>{row.received ? rtt.toFixed(2) : "—"}</td>
+                ))}
               </tr>
             ))}
         </tbody>
@@ -136,10 +134,10 @@ export function TraceProbe({ tool }: { tool: TraceTool }) {
     url.search = new URLSearchParams({ tool, host: host.trim() }).toString();
     const socket = new WebSocket(url);
     socketRef.current = socket;
-    socket.onopen = () => {
+    socket.addEventListener("open", () => {
       if (socketRef.current === socket) setPhase("running");
-    };
-    socket.onmessage = (event) => {
+    });
+    socket.addEventListener("message", (event) => {
       if (socketRef.current !== socket) return;
       const next = JSON.parse(event.data) as Snapshot;
       latestRef.current = next;
@@ -148,15 +146,13 @@ export function TraceProbe({ tool }: { tool: TraceTool }) {
         finishedRef.current = true;
         setPhase("done");
       }
-    };
-    socket.onerror = () => {
+    });
+    socket.addEventListener("error", () => {
       if (socketRef.current === socket) {
-        setError(
-          "探测连接失败，请检查目标地址、管理认证和后端 WebSocket 代理。",
-        );
+        setError("探测连接失败，请检查目标地址、管理认证和后端 WebSocket 代理。");
       }
-    };
-    socket.onclose = () => {
+    });
+    socket.addEventListener("close", () => {
       if (socketRef.current !== socket) return;
       socketRef.current = null;
       if (finishedRef.current) {
@@ -165,7 +161,7 @@ export function TraceProbe({ tool }: { tool: TraceTool }) {
         setPhase("error");
         setError((current) => current || "探测连接意外断开，可重新开始。");
       }
-    };
+    });
   }
 
   function togglePause() {
@@ -208,9 +204,7 @@ export function TraceProbe({ tool }: { tool: TraceTool }) {
       <div className="panel-head">
         <div>
           <h2>{name}</h2>
-          <p>
-            服务端每 2 秒推送结果，最多运行 60 秒；仅显示 IP，不做域名反解析。
-          </p>
+          <p>服务端每 2 秒推送结果，最多运行 60 秒；仅显示 IP，不做域名反解析。</p>
         </div>
         <Network size={20} />
       </div>
@@ -244,12 +238,7 @@ export function TraceProbe({ tool }: { tool: TraceTool }) {
           {paused ? <Play size={16} /> : <Pause size={16} />}
           {paused ? "恢复展示" : "暂停展示"}
         </button>
-        <button
-          type="button"
-          className="button danger"
-          disabled={!active}
-          onClick={terminate}
-        >
+        <button type="button" className="button danger" disabled={!active} onClick={terminate}>
           <Square size={16} />
           终止探测
         </button>
@@ -257,9 +246,7 @@ export function TraceProbe({ tool }: { tool: TraceTool }) {
       <div className="probe-result">
         <div className="probe-summary" role="status">
           <strong>{state}</strong>
-          {snapshot && (
-            <span>运行 {(snapshot.elapsed_ms / 1000).toFixed(1)} 秒</span>
-          )}
+          {snapshot && <span>运行 {(snapshot.elapsed_ms / 1000).toFixed(1)} 秒</span>}
           {paused && <span>展示已暂停</span>}
         </div>
         <p className="muted trace-help">
@@ -284,18 +271,13 @@ export function TraceProbe({ tool }: { tool: TraceTool }) {
               <>
                 <MtrTable output={snapshot.stdout} />
                 <p className="muted trace-help">
-                  未回包包含仍在等待的请求；中间节点可能限制 ICMP
-                  回包，请结合目标节点判断。
+                  未回包包含仍在等待的请求；中间节点可能限制 ICMP 回包，请结合目标节点判断。
                 </p>
               </>
             )}
             <details open={tool === "traceroute"}>
-              <summary>
-                {tool === "mtr" ? "MTR 原始输出" : "路由追踪结果"}
-              </summary>
-              <pre className="logs probe-output">
-                {snapshot.stdout || "等待探测结果…"}
-              </pre>
+              <summary>{tool === "mtr" ? "MTR 原始输出" : "路由追踪结果"}</summary>
+              <pre className="logs probe-output">{snapshot.stdout || "等待探测结果…"}</pre>
             </details>
             {snapshot.stderr && (
               <details open>

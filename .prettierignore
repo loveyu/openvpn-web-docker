@@ -1,0 +1,10 @@
+.git/
+config/
+frontend/dist/
+frontend/node_modules/
+target/
+*.lock
+*.key
+*.pem
+*.crt
+*.ovpn

@@ -1,11 +1,4 @@
-import {
-  StrictMode,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { StrictMode, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import {
   HashRouter,
@@ -61,8 +54,7 @@ import type {
 } from "./types";
 import "./style.css";
 
-type Tab =
-  "overview" | "vpn" | "http" | "socks5" | "sshd" | "logs" | "health" | "tools";
+type Tab = "overview" | "vpn" | "http" | "socks5" | "sshd" | "logs" | "health" | "tools";
 const nav = [
   {
     id: "overview",
@@ -202,9 +194,7 @@ function AuthFields({
             onChange({
               ...value,
               authentication,
-              ...(authentication === "none"
-                ? { username: "", password: "" }
-                : {}),
+              ...(authentication === "none" ? { username: "", password: "" } : {}),
             });
           }}
         >
@@ -218,9 +208,7 @@ function AuthFields({
             <input
               autoComplete="off"
               value={value.username}
-              onChange={(event) =>
-                onChange({ ...value, username: event.target.value })
-              }
+              onChange={(event) => onChange({ ...value, username: event.target.value })}
               placeholder="proxyuser"
             />
           </Field>
@@ -229,9 +217,7 @@ function AuthFields({
               type="password"
               autoComplete="new-password"
               value={value.password}
-              onChange={(event) =>
-                onChange({ ...value, password: event.target.value })
-              }
+              onChange={(event) => onChange({ ...value, password: event.target.value })}
             />
           </Field>
         </>
@@ -289,9 +275,7 @@ function DnsTable({ rows }: { rows: DnsResult[] }) {
           ))}
         </tbody>
       </table>
-      {rows.length === 0 && (
-        <p className="table-empty">探测中，后台异步更新结果…</p>
-      )}
+      {rows.length === 0 && <p className="table-empty">探测中，后台异步更新结果…</p>}
     </div>
   );
 }
@@ -337,14 +321,9 @@ function ThemeSwitcher() {
 function App({ tab }: { tab: Tab }) {
   const navigate = useNavigate();
   const { tool: requestedTool = "" } = useParams();
-  const selectedTool = [
-    "ping",
-    "tcping",
-    "curl",
-    "dns",
-    "mtr",
-    "traceroute",
-  ].includes(requestedTool)
+  const selectedTool = ["ping", "tcping", "curl", "dns", "mtr", "traceroute"].includes(
+    requestedTool,
+  )
     ? requestedTool
     : "";
   const setTab = (value: Tab) => navigate(`/${value}`);
@@ -356,9 +335,7 @@ function App({ tab }: { tab: Tab }) {
   const [newProfile, setNewProfile] = useState(false);
   const authHelp = useRef<HTMLDialogElement>(null);
   // 部署配置不是登录表单，仅在获焦时开放编辑，避免浏览器回填管理凭据。
-  const [sshCredentialFocus, setSshCredentialFocus] = useState<
-    "username" | "password"
-  >();
+  const [sshCredentialFocus, setSshCredentialFocus] = useState<"username" | "password">();
   const [newProfileName, setNewProfileName] = useState("");
   const [dnsDomain, setDnsDomain] = useState("example.com");
   const [dnsResults, setDnsResults] = useState<DnsResults>();
@@ -372,20 +349,11 @@ function App({ tab }: { tab: Tab }) {
   const [log, setLog] = useState("");
   const upload = useRef<HTMLInputElement>(null);
 
-  const notify = useCallback(
-    (text: string, error = false) => setNotice({ text, error }),
-    [],
-  );
-  const refresh = useCallback(
-    async () => setStatus(await request<Status>("/status")),
-    [],
-  );
+  const notify = useCallback((text: string, error = false) => setNotice({ text, error }), []);
+  const refresh = useCallback(async () => setStatus(await request<Status>("/status")), []);
   useEffect(() => {
     let cancelled = false;
-    Promise.all([
-      request<ConfigDocument>("/config"),
-      request<Status>("/status"),
-    ])
+    Promise.all([request<ConfigDocument>("/config"), request<Status>("/status")])
       .then(([settings, state]) => {
         if (!cancelled) {
           setDocumentConfig(settings);
@@ -397,8 +365,7 @@ function App({ tab }: { tab: Tab }) {
         if (!cancelled) notify(error.message, true);
       });
     const timer = setInterval(() => {
-      if (!document.hidden)
-        refresh().catch((error) => notify(error.message, true));
+      if (!document.hidden) refresh().catch((error) => notify(error.message, true));
     }, 5000);
     return () => {
       cancelled = true;
@@ -418,14 +385,11 @@ function App({ tab }: { tab: Tab }) {
     return () => window.removeEventListener("beforeunload", beforeUnload);
   }, [dirty]);
   const loadLogs = useCallback(async () => {
-    const response = await request<{ content: string }>(
-      `/logs/${logService}?lines=300`,
-    );
+    const response = await request<{ content: string }>(`/logs/${logService}?lines=300`);
     setLog(response.content);
   }, [logService]);
   useEffect(() => {
-    if (tab === "logs")
-      loadLogs().catch((error) => notify(error.message, true));
+    if (tab === "logs") loadLogs().catch((error) => notify(error.message, true));
   }, [tab, loadLogs, notify]);
 
   function update<K extends keyof Config>(section: K, value: Config[K]) {
@@ -469,18 +433,12 @@ function App({ tab }: { tab: Tab }) {
     setDocumentConfig(result.config);
     setDirty(false);
   }
-  function control(
-    service: Service,
-    action: "start" | "stop" | "restart",
-    saveFirst = false,
-  ) {
+  function control(service: Service, action: "start" | "stop" | "restart", saveFirst = false) {
     void execute(async () => {
-      if (saveFirst || (service === "openvpn" && action !== "stop"))
-        await save();
-      const result = await request<{ message: string }>(
-        `/services/${service}/${action}`,
-        { method: "POST" },
-      );
+      if (saveFirst || (service === "openvpn" && action !== "stop")) await save();
+      const result = await request<{ message: string }>(`/services/${service}/${action}`, {
+        method: "POST",
+      });
       notify(result.message);
       if (service !== "backend") await refresh();
     });
@@ -614,11 +572,7 @@ function App({ tab }: { tab: Tab }) {
                 </option>
               ))}
             </select>
-            <button
-              className="button small"
-              disabled={busy}
-              onClick={() => setNewProfile(true)}
-            >
+            <button className="button small" disabled={busy} onClick={() => setNewProfile(true)}>
               <Plus size={14} />
               新增配置
             </button>
@@ -655,10 +609,7 @@ function App({ tab }: { tab: Tab }) {
             <div className="empty-state">
               <LoaderCircle className="spin" />
               正在读取配置…
-              <button
-                className="button"
-                onClick={() => window.location.reload()}
-              >
+              <button className="button" onClick={() => window.location.reload()}>
                 重试
               </button>
             </div>
@@ -666,23 +617,16 @@ function App({ tab }: { tab: Tab }) {
             <>
               {tab === "overview" && (
                 <>
-                  <section
-                    className={`connection-hero ${connected ? "connected" : ""}`}
-                  >
+                  <section className={`connection-hero ${connected ? "connected" : ""}`}>
                     <div className="hero-main">
                       <div className="hero-shield">
                         <ShieldCheck size={32} />
                       </div>
                       <div>
                         <div className="hero-kicker">
-                          OPENVPN TUNNEL{" "}
-                          <span>{connected ? "已连接" : "未连接"}</span>
+                          OPENVPN TUNNEL <span>{connected ? "已连接" : "未连接"}</span>
                         </div>
-                        <h2>
-                          {connected
-                            ? "安全通道已建立"
-                            : "准备好，连接你的网络。"}
-                        </h2>
+                        <h2>{connected ? "安全通道已建立" : "准备好，连接你的网络。"}</h2>
                         <p>
                           {connected
                             ? `隧道地址 ${status?.vpn.ip} · 所有代理出口均通过 VPN`
@@ -696,21 +640,15 @@ function App({ tab }: { tab: Tab }) {
                       onClick={() =>
                         connected
                           ? control("openvpn", "stop")
-                          : config.vpn.config.trim() ||
-                              config.vpn.endpoints.length > 0
+                          : config.vpn.config.trim() || config.vpn.endpoints.length > 0
                             ? control("openvpn", "start")
                             : setTab("vpn")
                       }
                     >
-                      {connected ? (
-                        <Square size={15} />
-                      ) : (
-                        <ArrowRight size={16} />
-                      )}
+                      {connected ? <Square size={15} /> : <ArrowRight size={16} />}
                       {connected
                         ? "断开连接"
-                        : config.vpn.config.trim() ||
-                            config.vpn.endpoints.length > 0
+                        : config.vpn.config.trim() || config.vpn.endpoints.length > 0
                           ? "建立连接"
                           : "配置连接"}
                     </button>
@@ -733,9 +671,7 @@ function App({ tab }: { tab: Tab }) {
                         <ShieldCheck size={16} />
                         出口保护
                       </div>
-                      <strong className="mint">
-                        {status?.kill_switch ? "已开启" : "读取中"}
-                      </strong>
+                      <strong className="mint">{status?.kill_switch ? "已开启" : "读取中"}</strong>
                       <p>VPN 断开后阻止流量直连</p>
                     </div>
                     <div className="stat">
@@ -764,103 +700,87 @@ function App({ tab }: { tab: Tab }) {
                     }
                   >
                     <div className="service-list">
-                      {(
-                        [
-                          "openvpn",
-                          "http",
-                          "socks5",
-                          "sshd",
-                          "backend",
-                        ] as Service[]
-                      ).map((name, index) => {
-                        const Icon = [
-                          ShieldCheck,
-                          Globe2,
-                          Network,
-                          Terminal,
-                          Settings2,
-                        ][index];
-                        const port =
-                          name === "openvpn"
-                            ? "tun0"
-                            : `:${status?.ports.find((item) => item.name === name)?.port ?? "—"}`;
-                        return (
-                          <div className="service-row" key={name}>
-                            <div className="service-icon">
-                              <Icon size={19} />
-                            </div>
-                            <div className="service-name">
-                              <strong>{names[name]}</strong>
-                              <span>
-                                {
-                                  [
-                                    "加密隧道",
-                                    "Tinyproxy",
-                                    "Dante · TCP CONNECT",
-                                    "OpenSSH",
-                                    "Rust · Axum",
-                                  ][index]
-                                }
-                              </span>
-                            </div>
-                            <code>{port}</code>
-                            <Badge state={serviceState(name)} />
-                            <div className="service-actions">
-                              {name !== "backend" && (
+                      {(["openvpn", "http", "socks5", "sshd", "backend"] as Service[]).map(
+                        (name, index) => {
+                          const Icon = [ShieldCheck, Globe2, Network, Terminal, Settings2][index];
+                          const port =
+                            name === "openvpn"
+                              ? "tun0"
+                              : `:${status?.ports.find((item) => item.name === name)?.port ?? "—"}`;
+                          return (
+                            <div className="service-row" key={name}>
+                              <div className="service-icon">
+                                <Icon size={19} />
+                              </div>
+                              <div className="service-name">
+                                <strong>{names[name]}</strong>
+                                <span>
+                                  {
+                                    [
+                                      "加密隧道",
+                                      "Tinyproxy",
+                                      "Dante · TCP CONNECT",
+                                      "OpenSSH",
+                                      "Rust · Axum",
+                                    ][index]
+                                  }
+                                </span>
+                              </div>
+                              <code>{port}</code>
+                              <Badge state={serviceState(name)} />
+                              <div className="service-actions">
+                                {name !== "backend" && (
+                                  <button
+                                    className="icon-button"
+                                    disabled={busy}
+                                    title={
+                                      serviceState(name) === "RUNNING"
+                                        ? `停止${names[name]}`
+                                        : `启动${names[name]}`
+                                    }
+                                    aria-label={
+                                      serviceState(name) === "RUNNING"
+                                        ? `停止${names[name]}`
+                                        : `启动${names[name]}`
+                                    }
+                                    onClick={() =>
+                                      control(
+                                        name,
+                                        serviceState(name) === "RUNNING" ? "stop" : "start",
+                                      )
+                                    }
+                                  >
+                                    {serviceState(name) === "RUNNING" ? (
+                                      <Square size={14} />
+                                    ) : (
+                                      <Play size={14} />
+                                    )}
+                                  </button>
+                                )}
                                 <button
                                   className="icon-button"
                                   disabled={busy}
-                                  title={
-                                    serviceState(name) === "RUNNING"
-                                      ? `停止${names[name]}`
-                                      : `启动${names[name]}`
-                                  }
-                                  aria-label={
-                                    serviceState(name) === "RUNNING"
-                                      ? `停止${names[name]}`
-                                      : `启动${names[name]}`
-                                  }
-                                  onClick={() =>
-                                    control(
-                                      name,
-                                      serviceState(name) === "RUNNING"
-                                        ? "stop"
-                                        : "start",
-                                    )
-                                  }
+                                  title={`重启${names[name]}`}
+                                  aria-label={`重启${names[name]}`}
+                                  onClick={() => control(name, "restart")}
                                 >
-                                  {serviceState(name) === "RUNNING" ? (
-                                    <Square size={14} />
-                                  ) : (
-                                    <Play size={14} />
-                                  )}
+                                  <RefreshCw size={15} />
                                 </button>
-                              )}
-                              <button
-                                className="icon-button"
-                                disabled={busy}
-                                title={`重启${names[name]}`}
-                                aria-label={`重启${names[name]}`}
-                                onClick={() => control(name, "restart")}
-                              >
-                                <RefreshCw size={15} />
-                              </button>
-                              {name !== "backend" && (
-                                <button
-                                  className="icon-button"
-                                  title={`配置${names[name]}`}
-                                  aria-label={`配置${names[name]}`}
-                                  onClick={() =>
-                                    setTab(name === "openvpn" ? "vpn" : name)
-                                  }
-                                >
-                                  <Settings2 size={15} />
-                                </button>
-                              )}
+                                {name !== "backend" && (
+                                  <button
+                                    className="icon-button"
+                                    title={`配置${names[name]}`}
+                                    aria-label={`配置${names[name]}`}
+                                    onClick={() => setTab(name === "openvpn" ? "vpn" : name)}
+                                  >
+                                    <Settings2 size={15} />
+                                  </button>
+                                )}
+                              </div>
                             </div>
-                          </div>
-                        );
-                      })}
+                          );
+                        },
+                      )}
                     </div>
                   </Panel>
                   <Panel
@@ -874,9 +794,7 @@ function App({ tab }: { tab: Tab }) {
                             <span>{names[item.name]}</span>
                             <span className="port-label">容器端口</span>
                             <strong className="mono">:{item.port}</strong>
-                            <small
-                              className={item.listening ? "mint" : "muted"}
-                            >
+                            <small className={item.listening ? "mint" : "muted"}>
                               {item.listening ? "正在监听" : "未监听"}
                             </small>
                             <div className="port-mapping">
@@ -900,18 +818,10 @@ function App({ tab }: { tab: Tab }) {
                     <ShieldCheck size={17} />
                     <p>
                       容器健康：
-                      {status?.health.container.healthy
-                        ? "正常"
-                        : "待就绪 / 异常"}
-                      。 OpenVPN 健康：
-                      {status
-                        ? vpnHealthLabels[status.health.vpn.state]
-                        : "读取中"}
-                      。{status?.health.container.errors.join("；")}
-                      <button
-                        className="text-button"
-                        onClick={() => setTab("health")}
-                      >
+                      {status?.health.container.healthy ? "正常" : "待就绪 / 异常"}。 OpenVPN 健康：
+                      {status ? vpnHealthLabels[status.health.vpn.state] : "读取中"}。
+                      {status?.health.container.errors.join("；")}
+                      <button className="text-button" onClick={() => setTab("health")}>
                         查看健康检查
                       </button>
                     </p>
@@ -919,8 +829,7 @@ function App({ tab }: { tab: Tab }) {
                   <div className="note">
                     <LockKeyhole size={17} />
                     <p>
-                      HTTP、SOCKS5 和 SSH 转发共享 VPN
-                      网络出口。关闭隧道后，管理页面和已发布的 SSH
+                      HTTP、SOCKS5 和 SSH 转发共享 VPN 网络出口。关闭隧道后，管理页面和已发布的 SSH
                       端口仍可访问。
                     </p>
                   </div>
@@ -932,10 +841,8 @@ function App({ tab }: { tab: Tab }) {
                     <Activity size={17} />
                     <p>
                       OpenVPN 健康：
-                      {status
-                        ? vpnHealthLabels[status.health.vpn.state]
-                        : "读取中"}
-                      。{status?.health.vpn.errors.join("；")}
+                      {status ? vpnHealthLabels[status.health.vpn.state] : "读取中"}。
+                      {status?.health.vpn.errors.join("；")}
                     </p>
                   </div>
                   <Panel
@@ -950,8 +857,7 @@ function App({ tab }: { tab: Tab }) {
                             `endpoint-${Date.now()}-${Math.random().toString(16).slice(2)}`;
                           update("vpn", {
                             ...config.vpn,
-                            selected_endpoint:
-                              config.vpn.selected_endpoint || id,
+                            selected_endpoint: config.vpn.selected_endpoint || id,
                             endpoints: [
                               ...config.vpn.endpoints,
                               {
@@ -999,8 +905,7 @@ function App({ tab }: { tab: Tab }) {
                             onChange={(event) =>
                               update("vpn", {
                                 ...config.vpn,
-                                selection_mode: event.target.value as
-                                  "auto" | "manual",
+                                selection_mode: event.target.value as "auto" | "manual",
                               })
                             }
                           >
@@ -1020,14 +925,11 @@ function App({ tab }: { tab: Tab }) {
                             }
                           >
                             {config.vpn.endpoints.length === 0 && (
-                              <option value="">
-                                使用 .ovpn 原文中的 remote
-                              </option>
+                              <option value="">使用 .ovpn 原文中的 remote</option>
                             )}
                             {config.vpn.endpoints.map((item) => (
                               <option key={item.id} value={item.id}>
-                                {item.name || item.host || "未命名"} ·{" "}
-                                {item.host}:{item.port} /{" "}
+                                {item.name || item.host || "未命名"} · {item.host}:{item.port} /{" "}
                                 {item.protocol.toUpperCase()}
                               </option>
                             ))}
@@ -1042,10 +944,7 @@ function App({ tab }: { tab: Tab }) {
                             onDragOver={(event) => event.preventDefault()}
                             onDrop={(event) => {
                               event.preventDefault();
-                              moveEndpoint(
-                                event.dataTransfer.getData("text/plain"),
-                                index,
-                              );
+                              moveEndpoint(event.dataTransfer.getData("text/plain"), index);
                             }}
                           >
                             <button
@@ -1053,10 +952,7 @@ function App({ tab }: { tab: Tab }) {
                               draggable
                               aria-label={`拖动 endpoint ${index + 1}`}
                               onDragStart={(event) => {
-                                event.dataTransfer.setData(
-                                  "text/plain",
-                                  item.id,
-                                );
+                                event.dataTransfer.setData("text/plain", item.id);
                                 event.dataTransfer.effectAllowed = "move";
                               }}
                             >
@@ -1069,11 +965,10 @@ function App({ tab }: { tab: Tab }) {
                               onChange={(event) =>
                                 update("vpn", {
                                   ...config.vpn,
-                                  endpoints: config.vpn.endpoints.map(
-                                    (value) =>
-                                      value.id === item.id
-                                        ? { ...value, name: event.target.value }
-                                        : value,
+                                  endpoints: config.vpn.endpoints.map((value) =>
+                                    value.id === item.id
+                                      ? { ...value, name: event.target.value }
+                                      : value,
                                   ),
                                 })
                               }
@@ -1085,11 +980,10 @@ function App({ tab }: { tab: Tab }) {
                               onChange={(event) =>
                                 update("vpn", {
                                   ...config.vpn,
-                                  endpoints: config.vpn.endpoints.map(
-                                    (value) =>
-                                      value.id === item.id
-                                        ? { ...value, host: event.target.value }
-                                        : value,
+                                  endpoints: config.vpn.endpoints.map((value) =>
+                                    value.id === item.id
+                                      ? { ...value, host: event.target.value }
+                                      : value,
                                   ),
                                 })
                               }
@@ -1103,14 +997,13 @@ function App({ tab }: { tab: Tab }) {
                               onChange={(event) =>
                                 update("vpn", {
                                   ...config.vpn,
-                                  endpoints: config.vpn.endpoints.map(
-                                    (value) =>
-                                      value.id === item.id
-                                        ? {
-                                            ...value,
-                                            port: Number(event.target.value),
-                                          }
-                                        : value,
+                                  endpoints: config.vpn.endpoints.map((value) =>
+                                    value.id === item.id
+                                      ? {
+                                          ...value,
+                                          port: Number(event.target.value),
+                                        }
+                                      : value,
                                   ),
                                 })
                               }
@@ -1121,15 +1014,13 @@ function App({ tab }: { tab: Tab }) {
                               onChange={(event) =>
                                 update("vpn", {
                                   ...config.vpn,
-                                  endpoints: config.vpn.endpoints.map(
-                                    (value) =>
-                                      value.id === item.id
-                                        ? {
-                                            ...value,
-                                            protocol: event.target.value as
-                                              "udp" | "tcp",
-                                          }
-                                        : value,
+                                  endpoints: config.vpn.endpoints.map((value) =>
+                                    value.id === item.id
+                                      ? {
+                                          ...value,
+                                          protocol: event.target.value as "udp" | "tcp",
+                                        }
+                                      : value,
                                   ),
                                 })
                               }
@@ -1148,9 +1039,7 @@ function App({ tab }: { tab: Tab }) {
                             <button
                               className="icon-button"
                               aria-label={`下移 endpoint ${index + 1}`}
-                              disabled={
-                                index === config.vpn.endpoints.length - 1
-                              }
+                              disabled={index === config.vpn.endpoints.length - 1}
                               onClick={() => moveEndpoint(item.id, index + 1)}
                             >
                               ↓
@@ -1180,8 +1069,7 @@ function App({ tab }: { tab: Tab }) {
                       <div className="note">
                         <Network size={16} />
                         <p>
-                          Auto 对 IP＋端口执行 OpenVPN 握手验证（含 UDP），再按
-                          Ping / TCPing
+                          Auto 对 IP＋端口执行 OpenVPN 握手验证（含 UDP），再按 Ping / TCPing
                           延迟选择；无法测得延迟时按排序选首个可用项。手动选择时仅连接指定项。填写列表后，原文中的
                           remote 将由列表接管。
                         </p>
@@ -1190,8 +1078,7 @@ function App({ tab }: { tab: Tab }) {
                         <p className="inline-status">
                           当前连接：
                           <code>
-                            {status.selected_endpoint.ip}:
-                            {status.selected_endpoint.port} /{" "}
+                            {status.selected_endpoint.ip}:{status.selected_endpoint.port} /{" "}
                             {status.selected_endpoint.protocol.toUpperCase()}
                           </code>
                         </p>
@@ -1216,9 +1103,7 @@ function App({ tab }: { tab: Tab }) {
                                     </code>
                                   </td>
                                   <td>{item.protocol.toUpperCase()}</td>
-                                  <td title={item.error}>
-                                    {item.ok ? "握手成功" : "不可用"}
-                                  </td>
+                                  <td title={item.error}>{item.ok ? "握手成功" : "不可用"}</td>
                                   <td>
                                     {item.latency_ms == null
                                       ? "按排序选择"
@@ -1265,10 +1150,7 @@ function App({ tab }: { tab: Tab }) {
                             event.target.value = "";
                           }}
                         />
-                        <button
-                          className="button small"
-                          onClick={() => upload.current?.click()}
-                        >
+                        <button className="button small" onClick={() => upload.current?.click()}>
                           <Upload size={14} />
                           导入 .ovpn
                         </button>
@@ -1298,9 +1180,7 @@ function App({ tab }: { tab: Tab }) {
                       </Field>
                       <Toggle
                         checked={config.vpn.autoconnect}
-                        onChange={(autoconnect) =>
-                          update("vpn", { ...config.vpn, autoconnect })
-                        }
+                        onChange={(autoconnect) => update("vpn", { ...config.vpn, autoconnect })}
                         label="容器启动时自动连接"
                         help="仅在已填写有效 OpenVPN 配置时建立连接"
                       />
@@ -1345,30 +1225,22 @@ function App({ tab }: { tab: Tab }) {
                             onChange={(event) =>
                               update("vpn", {
                                 ...config.vpn,
-                                dns_mode: event.target.value as
-                                  "manual" | "pushed",
+                                dns_mode: event.target.value as "manual" | "pushed",
                               })
                             }
                           >
-                            <option value="pushed">
-                              自动 · 使用 OpenVPN 下发 DNS
-                            </option>
+                            <option value="pushed">自动 · 使用 OpenVPN 下发 DNS</option>
                             <option value="manual">手动指定</option>
                           </select>
                         </Field>
-                        <Field
-                          label="手动 DNS"
-                          help="IPv4 地址，多个地址用逗号分隔。"
-                        >
+                        <Field label="手动 DNS" help="IPv4 地址，多个地址用逗号分隔。">
                           <input
                             disabled={config.vpn.dns_mode !== "manual"}
                             value={config.vpn.dns.join(", ")}
                             onChange={(event) =>
                               update("vpn", {
                                 ...config.vpn,
-                                dns: event.target.value
-                                  .split(/[,，]/)
-                                  .map((value) => value.trim()),
+                                dns: event.target.value.split(/[,，]/).map((value) => value.trim()),
                               })
                             }
                           />
@@ -1378,18 +1250,13 @@ function App({ tab }: { tab: Tab }) {
                         <div>
                           <dt>服务器下发</dt>
                           <dd>
-                            <code>
-                              {status?.dns.pushed.join(", ") || "尚未获取"}
-                            </code>
+                            <code>{status?.dns.pushed.join(", ") || "尚未获取"}</code>
                           </dd>
                         </div>
                         <div>
                           <dt>当前生效</dt>
                           <dd>
-                            <code>
-                              {status?.dns.effective.join(", ") ||
-                                "暂无可用 DNS"}
-                            </code>
+                            <code>{status?.dns.effective.join(", ") || "暂无可用 DNS"}</code>
                             <span>
                               {status?.dns.source === "manual"
                                 ? "手动配置"
@@ -1403,9 +1270,8 @@ function App({ tab }: { tab: Tab }) {
                       <div className="note">
                         <CircleHelp size={16} />
                         <p>
-                          自动模式未收到服务器 DNS 时不会回退到公网 DNS。仅应用
-                          DNS 无需重启容器、VPN
-                          或代理；已有连接与缓存由应用自行更新。
+                          自动模式未收到服务器 DNS 时不会回退到公网 DNS。仅应用 DNS
+                          无需重启容器、VPN 或代理；已有连接与缓存由应用自行更新。
                         </p>
                       </div>
                     </div>
@@ -1417,10 +1283,9 @@ function App({ tab }: { tab: Tab }) {
                         onClick={() =>
                           void execute(async () => {
                             await save();
-                            const result = await request<{ message: string }>(
-                              "/dns",
-                              { method: "POST" },
-                            );
+                            const result = await request<{ message: string }>("/dns", {
+                              method: "POST",
+                            });
                             notify(result.message);
                             await refresh();
                           })
@@ -1445,15 +1310,15 @@ function App({ tab }: { tab: Tab }) {
                               )?.id ?? "custom"
                             }
                             onChange={(event) => {
-                              const item = status?.httpdns_presets.find(
-                                (item) => item.id === event.target.value,
+                              const preset = status?.httpdns_presets.find(
+                                (candidate) => candidate.id === event.target.value,
                               );
-                              if (item)
+                              if (preset)
                                 update("vpn", {
                                   ...config.vpn,
-                                  httpdns_url: item.url,
-                                  httpdns_ips: item.ips,
-                                  httpdns_protocol: item.protocol,
+                                  httpdns_url: preset.url,
+                                  httpdns_ips: preset.ips,
+                                  httpdns_protocol: preset.protocol,
                                 });
                             }}
                           >
@@ -1471,8 +1336,7 @@ function App({ tab }: { tab: Tab }) {
                             onChange={(event) =>
                               update("vpn", {
                                 ...config.vpn,
-                                httpdns_protocol: event.target.value as
-                                  "doh" | "json",
+                                httpdns_protocol: event.target.value as "doh" | "json",
                               })
                             }
                           >
@@ -1514,8 +1378,7 @@ function App({ tab }: { tab: Tab }) {
                           {status?.httpdns.state === "ready"
                             ? "启动探测已完成，以下结果按耗时排序。"
                             : "启动探测正在后台异步进行，不阻塞管理页面。"}
-                          默认首选腾讯
-                          DNSPod；均不可用时会报告解析失败并保留断线保护。
+                          默认首选腾讯 DNSPod；均不可用时会报告解析失败并保留断线保护。
                         </p>
                       </div>
                       <DnsTable rows={status?.httpdns.results ?? []} />
@@ -1585,9 +1448,7 @@ function App({ tab }: { tab: Tab }) {
                       label={`启用${tab === "http" ? " HTTP" : " SOCKS5"} 代理`}
                       help="启用后由 Supervisor 守护，出口受 VPN 防火墙保护"
                       checked={config[tab].enabled}
-                      onChange={(enabled) =>
-                        update(tab, { ...config[tab], enabled })
-                      }
+                      onChange={(enabled) => update(tab, { ...config[tab], enabled })}
                     />
                     <div className="form-grid">
                       <AuthFields
@@ -1620,9 +1481,7 @@ function App({ tab }: { tab: Tab }) {
                     <Toggle
                       label="启用 SSH 访问"
                       checked={config.sshd.enabled}
-                      onChange={(enabled) =>
-                        update("sshd", { ...config.sshd, enabled })
-                      }
+                      onChange={(enabled) => update("sshd", { ...config.sshd, enabled })}
                       help="密码与公钥至少配置一种，也可同时启用"
                     />
                     <div className="form-grid">
@@ -1642,11 +1501,7 @@ function App({ tab }: { tab: Tab }) {
                           }
                         />
                       </Field>
-                      <Field
-                        label="登录密码（可选）"
-                        help="留空关闭密码登录，改用公钥。"
-                        wide
-                      >
+                      <Field label="登录密码（可选）" help="留空关闭密码登录，改用公钥。" wide>
                         <input
                           name="ssh-service-password"
                           type="password"
@@ -1690,9 +1545,7 @@ function App({ tab }: { tab: Tab }) {
                       label="允许免密 sudo"
                       help="为此 SSH 用户授予容器内完整 root 权限，包括修改网络和防火墙"
                       checked={config.sshd.sudo}
-                      onChange={(sudo) =>
-                        update("sshd", { ...config.sshd, sudo })
-                      }
+                      onChange={(sudo) => update("sshd", { ...config.sshd, sudo })}
                     />
                   </form>
                   {footer("sshd")}
@@ -1710,9 +1563,7 @@ function App({ tab }: { tab: Tab }) {
                           className={`health-dot ${status?.health.container.healthy ? "healthy" : ""}`}
                         />
                         <strong>
-                          {status?.health.container.healthy
-                            ? "容器运行正常"
-                            : "等待就绪或检查失败"}
+                          {status?.health.container.healthy ? "容器运行正常" : "等待就绪或检查失败"}
                         </strong>
                       </div>
                       {status?.health.container.errors.map((error) => (
@@ -1732,9 +1583,7 @@ function App({ tab }: { tab: Tab }) {
                           className={`health-dot ${status?.health.vpn.healthy ? "healthy" : ""}`}
                         />
                         <strong>
-                          {status
-                            ? vpnHealthLabels[status.health.vpn.state]
-                            : "读取中"}
+                          {status ? vpnHealthLabels[status.health.vpn.state] : "读取中"}
                         </strong>
                       </div>
                       {status?.health.vpn.errors.map((error) => (
@@ -1743,8 +1592,8 @@ function App({ tab }: { tab: Tab }) {
                         </p>
                       ))}
                       <p className="muted">
-                        连续失败 {status?.health.vpn.consecutive_failures ?? 0}{" "}
-                        次，达到 {config.health.failure_threshold} 次：
+                        连续失败 {status?.health.vpn.consecutive_failures ?? 0} 次，达到{" "}
+                        {config.health.failure_threshold} 次：
                         {healthActionLabels[config.health.action]}。
                       </p>
                       {status?.health.vpn.probe.enabled && (
@@ -1755,22 +1604,15 @@ function App({ tab }: { tab: Tab }) {
                             : status.health.vpn.probe.ok
                               ? "成功"
                               : "失败"}{" "}
-                          {typeof status.health.vpn.probe.latency_ms ===
-                            "number" &&
+                          {typeof status.health.vpn.probe.latency_ms === "number" &&
                             `· ${status.health.vpn.probe.latency_ms.toFixed(1)} ms`}
-                          {status.health.vpn.probe.error &&
-                            ` · ${status.health.vpn.probe.error}`}
+                          {status.health.vpn.probe.error && ` · ${status.health.vpn.probe.error}`}
                         </p>
                       )}
                       {status?.health.vpn.last_action && (
                         <p className="muted">
                           最近恢复：
-                          {
-                            healthActionLabels[
-                              status.health.vpn.last_action.action
-                            ]
-                          }{" "}
-                          ·
+                          {healthActionLabels[status.health.vpn.last_action.action]} ·
                           {status.health.vpn.last_action.state === "running"
                             ? "执行中"
                             : status.health.vpn.last_action.state === "success"
@@ -1795,9 +1637,7 @@ function App({ tab }: { tab: Tab }) {
                         label="启用隧道网络探测"
                         help="Ping、TCP 和 HTTP 请求固定通过 tun0。关闭后仍检查 VPN 连接状态并按策略恢复。"
                         checked={config.health.enabled}
-                        onChange={(enabled) =>
-                          update("health", { ...config.health, enabled })
-                        }
+                        onChange={(enabled) => update("health", { ...config.health, enabled })}
                       />
                       <div className="form-grid compact-grid">
                         <Field label="不健康时的动作" wide>
@@ -1806,18 +1646,15 @@ function App({ tab }: { tab: Tab }) {
                             onChange={(event) =>
                               update("health", {
                                 ...config.health,
-                                action: event.target
-                                  .value as Config["health"]["action"],
+                                action: event.target.value as Config["health"]["action"],
                               })
                             }
                           >
-                            {Object.entries(healthActionLabels).map(
-                              ([value, label]) => (
-                                <option key={value} value={value}>
-                                  {label}
-                                </option>
-                              ),
-                            )}
+                            {Object.entries(healthActionLabels).map(([value, label]) => (
+                              <option key={value} value={value}>
+                                {label}
+                              </option>
+                            ))}
                           </select>
                         </Field>
                         <Field
@@ -1832,9 +1669,7 @@ function App({ tab }: { tab: Tab }) {
                             onChange={(event) =>
                               update("health", {
                                 ...config.health,
-                                action_cooldown_secs: Number(
-                                  event.target.value,
-                                ),
+                                action_cooldown_secs: Number(event.target.value),
                               })
                             }
                           />
@@ -1845,8 +1680,7 @@ function App({ tab }: { tab: Tab }) {
                             onChange={(event) =>
                               update("health", {
                                 ...config.health,
-                                kind: event.target
-                                  .value as Config["health"]["kind"],
+                                kind: event.target.value as Config["health"]["kind"],
                               })
                             }
                           >
@@ -1875,8 +1709,7 @@ function App({ tab }: { tab: Tab }) {
                                 onChange={(event) =>
                                   update("health", {
                                     ...config.health,
-                                    http_method: event.target.value as
-                                      "GET" | "HEAD",
+                                    http_method: event.target.value as "GET" | "HEAD",
                                   })
                                 }
                               >
@@ -1982,11 +1815,7 @@ function App({ tab }: { tab: Tab }) {
                             });
                             setHealthTest(result);
                             await refresh();
-                            notify(
-                              result.ok
-                                ? "已保存，手动检查通过"
-                                : "已保存，手动检查未通过",
-                            );
+                            notify(result.ok ? "已保存，手动检查通过" : "已保存，手动检查未通过");
                           })
                         }
                       >
@@ -1998,8 +1827,7 @@ function App({ tab }: { tab: Tab }) {
                       <div className="panel-body">
                         <p className="muted">
                           本次手动测试：{vpnHealthLabels[healthTest.state]}
-                          {healthTest.probe.enabled &&
-                          healthTest.probe.ok !== undefined
+                          {healthTest.probe.enabled && healthTest.probe.ok !== undefined
                             ? ` · 隧道网络探测${healthTest.probe.ok ? "成功" : "失败"}`
                             : ""}
                           。{healthTest.errors.join("；")}
@@ -2011,36 +1839,23 @@ function App({ tab }: { tab: Tab }) {
               )}
               {tab === "tools" && (
                 <>
-                  {requestedTool && !selectedTool && (
-                    <Navigate to="/tools" replace />
-                  )}
-                  <Panel
-                    title="选择网络工具"
-                    description="选择要使用的工具，开始诊断容器网络。"
-                  >
+                  {requestedTool && !selectedTool && <Navigate to="/tools" replace />}
+                  <Panel title="选择网络工具" description="选择要使用的工具，开始诊断容器网络。">
                     <div className="panel-body">
                       <Field label="网络工具">
                         <select
                           value={selectedTool}
                           onChange={(event) =>
-                            navigate(
-                              event.target.value
-                                ? `/tools/${event.target.value}`
-                                : "/tools",
-                            )
+                            navigate(event.target.value ? `/tools/${event.target.value}` : "/tools")
                           }
                         >
                           <option value="">请选择工具</option>
                           <option value="ping">Ping · ICMP 连通性</option>
                           <option value="tcping">TCPing · TCP 端口探测</option>
-                          <option value="curl">
-                            CURL · HTTP 请求与图片预览
-                          </option>
+                          <option value="curl">CURL · HTTP 请求与图片预览</option>
                           <option value="dns">DNS · 域名解析对比</option>
                           <option value="mtr">MTR · 持续路由探测</option>
-                          <option value="traceroute">
-                            Traceroute · 路由追踪
-                          </option>
+                          <option value="traceroute">Traceroute · 路由追踪</option>
                         </select>
                       </Field>
                     </div>
@@ -2050,8 +1865,7 @@ function App({ tab }: { tab: Tab }) {
                     selectedTool === "curl") && (
                     <NetworkProbes key={selectedTool} tool={selectedTool} />
                   )}
-                  {(selectedTool === "mtr" ||
-                    selectedTool === "traceroute") && (
+                  {(selectedTool === "mtr" || selectedTool === "traceroute") && (
                     <TraceProbe key={selectedTool} tool={selectedTool} />
                   )}
                   {selectedTool === "dns" && (
@@ -2075,16 +1889,11 @@ function App({ tab }: { tab: Tab }) {
                             });
                           }}
                         >
-                          <Field
-                            label="待解析域名"
-                            help="仅输入域名，例如 example.com。"
-                          >
+                          <Field label="待解析域名" help="仅输入域名，例如 example.com。">
                             <input
                               required
                               value={dnsDomain}
-                              onChange={(event) =>
-                                setDnsDomain(event.target.value)
-                              }
+                              onChange={(event) => setDnsDomain(event.target.value)}
                               placeholder="example.com"
                             />
                           </Field>
@@ -2115,8 +1924,7 @@ function App({ tab }: { tab: Tab }) {
                           <CircleHelp size={18} />
                           <p>
                             HTTPDNS 不依赖容器 DNS。VPN DNS
-                            需要隧道连接且服务器可达，测试不会修改当前 DNS
-                            设置。
+                            需要隧道连接且服务器可达，测试不会修改当前 DNS 设置。
                           </p>
                         </div>
                       )}
@@ -2133,9 +1941,7 @@ function App({ tab }: { tab: Tab }) {
                       <select
                         aria-label="日志服务"
                         value={logService}
-                        onChange={(event) =>
-                          setLogService(event.target.value as Service)
-                        }
+                        onChange={(event) => setLogService(event.target.value as Service)}
                       >
                         {Object.entries(names).map(([name, label]) => (
                           <option key={name} value={name}>
@@ -2155,9 +1961,7 @@ function App({ tab }: { tab: Tab }) {
                         className="icon-button"
                         aria-label="下载日志"
                         onClick={() => {
-                          const url = URL.createObjectURL(
-                            new Blob([log], { type: "text/plain" }),
-                          );
+                          const url = URL.createObjectURL(new Blob([log], { type: "text/plain" }));
                           const anchor = document.createElement("a");
                           anchor.href = url;
                           anchor.download = `${logService}.log`;
@@ -2170,9 +1974,7 @@ function App({ tab }: { tab: Tab }) {
                     </div>
                   }
                 >
-                  <pre className="logs">
-                    {log || "暂无日志。启动服务后在这里查看输出。"}
-                  </pre>
+                  <pre className="logs">{log || "暂无日志。启动服务后在这里查看输出。"}</pre>
                 </Panel>
               )}
             </>
@@ -2195,17 +1997,15 @@ function App({ tab }: { tab: Tab }) {
           设置 Basic Auth
         </h2>
         <p>
-          建议在项目根目录的 <code>.env</code>{" "}
-          文件中设置管理用户名和密码。首次使用可复制 <code>.env.example</code>
+          建议在项目根目录的 <code>.env</code> 文件中设置管理用户名和密码。首次使用可复制{" "}
+          <code>.env.example</code>
           ，已有文件直接编辑。
         </p>
         <pre className="logs probe-output">
           {"ADMIN_USERNAME=admin\nADMIN_PASSWORD='请替换为强密码'"}
         </pre>
         <p>保存后，在项目目录重新创建容器使配置生效：</p>
-        <pre className="logs probe-output">
-          docker compose up -d --force-recreate openvpn-web
-        </pre>
+        <pre className="logs probe-output">docker compose up -d --force-recreate openvpn-web</pre>
         <p>
           使用 <code>docker run</code> 时，也可以添加以下 <code>-e</code>{" "}
           参数，并在修改后重新创建容器：
@@ -2218,10 +2018,7 @@ function App({ tab }: { tab: Tab }) {
           请求需要携带同一组认证信息。仅重启容器不会更新环境变量。
         </p>
         <div className="modal-actions">
-          <button
-            className="button primary"
-            onClick={() => authHelp.current?.close()}
-          >
+          <button className="button primary" onClick={() => authHelp.current?.close()}>
             知道了
           </button>
         </div>
@@ -2235,21 +2032,16 @@ function App({ tab }: { tab: Tab }) {
             aria-labelledby="new-profile-title"
           >
             <h2 id="new-profile-title">新增 VPN 配置</h2>
-            <p>
-              新配置独立保存连接、认证和健康检查。当前连接保持运行，选择新配置时才切换。
-            </p>
+            <p>新配置独立保存连接、认证和健康检查。当前连接保持运行，选择新配置时才切换。</p>
             <form
               onSubmit={(event) => {
                 event.preventDefault();
                 void execute(async () => {
                   if (dirty) await save();
-                  const result = await request<{ config: ConfigDocument }>(
-                    "/profiles",
-                    {
-                      method: "POST",
-                      body: JSON.stringify({ name: newProfileName }),
-                    },
-                  );
+                  const result = await request<{ config: ConfigDocument }>("/profiles", {
+                    method: "POST",
+                    body: JSON.stringify({ name: newProfileName }),
+                  });
                   setDocumentConfig(result.config);
                   setNewProfile(false);
                   setNewProfileName("");
@@ -2266,11 +2058,7 @@ function App({ tab }: { tab: Tab }) {
                 />
               </Field>
               <div className="modal-actions">
-                <button
-                  type="button"
-                  className="button"
-                  onClick={() => setNewProfile(false)}
-                >
+                <button type="button" className="button" onClick={() => setNewProfile(false)}>
                   取消
                 </button>
                 <button className="button primary" disabled={busy}>

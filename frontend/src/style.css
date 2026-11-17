@@ -345,12 +345,7 @@ main {
   overflow: hidden;
   border: 1px solid var(--accent-border);
   border-radius: 9px;
-  background: linear-gradient(
-    120deg,
-    var(--accent-soft),
-    var(--hero-bg) 65%,
-    var(--accent-soft)
-  );
+  background: linear-gradient(120deg, var(--accent-soft), var(--hero-bg) 65%, var(--accent-soft));
   padding: 32px 28px;
   display: flex;
   gap: 24px;
@@ -855,8 +850,7 @@ code,
   min-height: 100dvh;
   display: grid;
   place-items: center;
-  background:
-    radial-gradient(ellipse at 50% 20%, #1d3f332f, transparent 65%), var(--bg);
+  background: radial-gradient(ellipse at 50% 20%, #1d3f332f, transparent 65%), var(--bg);
   padding: 25px;
 }
 .login-card {
