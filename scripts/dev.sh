@@ -61,7 +61,6 @@ reload_backend() {
 }
 
 enter_session() {
-    echo "开发会话：$SESSION（frontend / backend），前端：http://127.0.0.1:5173"
     if [[ -t 0 && -t 1 ]]; then
         if [[ -n "${TMUX:-}" ]]; then
             tmux switch-client -t "=$SESSION"
@@ -75,6 +74,9 @@ enter_session() {
 
 start() {
     if tmux has-session -t "=$SESSION" 2> /dev/null; then
+        FRONTEND_PORT=$(tmux show-environment -t "=$SESSION" FRONTEND_PORT)
+        FRONTEND_PORT=${FRONTEND_PORT#FRONTEND_PORT=}
+        compose config --format json | node "$ROOT_DIR/scripts/dev.mjs" wait "$FRONTEND_PORT"
         enter_session
         return
     fi
@@ -86,18 +88,22 @@ start() {
         echo "已创建 .env。"
     fi
     compose config --quiet
+    FRONTEND_PORT=$(compose config --environment | sed -n 's/^FRONTEND_PORT=//p')
+    FRONTEND_PORT=${FRONTEND_PORT:-5173}
+    compose config --format json | node "$ROOT_DIR/scripts/dev.mjs" check "$FRONTEND_PORT"
     if [[ -n "$(compose ps --status running --quiet openvpn-web)" ]]; then
-        echo "已有 Compose 后端在运行；请先自行停止，避免端口冲突和共用配置。" >&2
+        echo "已有 Compose 后端在运行，请先执行 docker compose stop openvpn-web。" >&2
         exit 1
     fi
     # 使用当前 PATH，避免已有 tmux 服务仍使用旧的 Node/pnpm 环境。
-    tmux new-session -d -s "$SESSION" -n backend -c "$ROOT_DIR" -e "PATH=$PATH" \
+    tmux new-session -d -s "$SESSION" -n backend -c "$ROOT_DIR" -e "PATH=$PATH" -e "FRONTEND_PORT=$FRONTEND_PORT" \
         "$BASH" "$ROOT_DIR/scripts/dev.sh" _backend \; \
         set-option -w -t "$SESSION:backend" remain-on-exit on \; \
         new-window -t "$SESSION:" -n frontend -c "$ROOT_DIR/frontend" \
         "$BASH" "$ROOT_DIR/scripts/dev.sh" _frontend \; \
         set-option -w -t "$SESSION:frontend" remain-on-exit on \; \
         select-window -t "$SESSION:frontend"
+    compose config --format json | node "$ROOT_DIR/scripts/dev.mjs" wait "$FRONTEND_PORT"
     enter_session
 }
 
@@ -147,7 +153,7 @@ case "${1:-start}" in
     _frontend)
         cd frontend
         pnpm install --frozen-lockfile
-        exec pnpm dev --strictPort
+        exec pnpm dev --port "$FRONTEND_PORT" --strictPort
         ;;
     *)
         echo "用法：$0 {start|stop|restart|build}" >&2

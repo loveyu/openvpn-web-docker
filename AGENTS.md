@@ -16,7 +16,7 @@
 | `frontend/src/main.tsx` | 前端页面、Hash 路由和交互 |
 | `frontend/src/api.ts`、`frontend/src/types.ts` | API 请求及前端类型；修改接口时同步核对 |
 | `docker/`、`Dockerfile`、`compose.yaml` | 启动脚本、Supervisor 配置、多阶段构建与部署 |
-| `scripts/dev.sh`、`compose.dev.yaml` | tmux 开发环境、临时后端、Rust 构建与进程更新 |
+| `scripts/dev.sh`、`scripts/dev.mjs`、`compose.dev.yaml` | tmux 开发环境、端口与就绪检查、临时后端、Rust 构建与进程更新 |
 | `scripts/smoke.py` | 使用隔离 Docker 网络和临时 VPN 服务端的集成验证 |
 | `docs/` | 部署、配置、网络、健康检查、存储和开发文档 |
 
@@ -35,6 +35,8 @@ Rust 工具链以 `rust-toolchain.toml` 为准，Node 版本以 `frontend/.node-
 ```
 
 开发环境使用一个 `openvpn-web-dev` tmux 会话：`frontend` 窗口运行本机 pnpm / Vite，`backend` 窗口构建并通过 `docker compose run --rm --service-ports` 运行临时后端、显示容器日志。停止时删除临时容器，保留配置与构建缓存；已有普通 Compose 后端须先自行停止。
+
+启动前检查端口占用并显示进程或容器、处理命令；通过 `.env` 的 `FRONTEND_PORT` 调整前端端口，默认 `5173`。启动成功须等待前端、后端健康检查和 Supervisor 就绪，再显示实际 URL；重复 `start` 同样显示当前服务地址。
 
 前端默认地址为 `http://127.0.0.1:5173`，后端默认地址为 `http://127.0.0.1:18080`。Vite 从根目录 `.env` 读取 `WEB_PORT`，自动代理 `/api` 和 `/healthz`，保留原始 `Host` 并支持 WebSocket，以满足后端同源校验；前端开发请求应始终经该代理访问容器后端。
 

@@ -74,10 +74,14 @@ test -f .env || cp .env.example .env
 
 | 窗口 | 行为 |
 | --- | --- |
-| `frontend` | 自动执行 `pnpm install --frozen-lockfile`，再运行 `pnpm dev --strictPort` |
+| `frontend` | 自动执行 `pnpm install --frozen-lockfile`，再运行 `pnpm dev --port "$FRONTEND_PORT" --strictPort` |
 | `backend` | 构建开发镜像和 Rust，使用 `docker compose run --detach --rm --service-ports` 启动 `openvpn-web-dev` 容器，并持续显示容器日志 |
 
-交互终端会进入该会话；在 tmux 内执行会切换会话。重复 `start` 进入已有会话，不重复启动服务。按 `Ctrl-b d` 离开后服务继续运行，用 `tmux attach-session -t openvpn-web-dev` 重新进入；按 `Ctrl-b w` 选择窗口。首次构建可能较慢，错误输出保留在对应窗口。停止命令终止两个窗口、构建容器和开发后端，后端退出后由 `--rm` 自动删除；`./config` 和 `target/` 下的构建缓存保留。
+启动前检查前端及所有容器映射端口；发现占用时显示端口、占用进程或容器，以及查看和调整端口的命令，并返回失败。前端端口通过根目录 `.env` 的 `FRONTEND_PORT` 设置，默认 `5173`；也可临时执行 `FRONTEND_PORT=5174 ./scripts/dev.sh start`。后端端口按提示调整 `.env` 对应变量。
+
+脚本等待前端、后端健康检查和 Supervisor 就绪后，显示实际前端、后端健康检查和 Supervisor URL，再进入 tmux；已有会话时重复 `start` 同样确认就绪并显示 URL。启动失败时提示对应窗口，错误输出保留在窗口中。首次构建可能较慢，等待期间可在另一终端查看 tmux 输出。
+
+交互终端会进入该会话；在 tmux 内执行会切换会话。按 `Ctrl-b d` 离开后服务继续运行，用 `tmux attach-session -t openvpn-web-dev` 重新进入；按 `Ctrl-b w` 选择窗口。停止命令终止两个窗口、构建容器和开发后端，后端退出后由 `--rm` 自动删除；`./config` 和 `target/` 下的构建缓存保留。
 
 已有普通 Compose 后端运行时，脚本会提示先自行停止，避免共用配置和端口；脚本不会自动停止该容器。VPN、代理和服务操作会作用于挂载的 `./config`，开发前按需备份。
 

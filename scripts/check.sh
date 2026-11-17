@@ -33,12 +33,14 @@ if [ ! -x "$FRONTEND_BIN/tsc" ] || [ ! -x "$FRONTEND_BIN/oxlint" ] || [ ! -x "$F
 fi
 (cd "$ROOT_DIR/frontend" && "$FRONTEND_BIN/tsc" --noEmit)
 (cd "$ROOT_DIR/frontend" && "$FRONTEND_BIN/oxlint" -D correctness -D suspicious --deny-warnings .)
+"$FRONTEND_BIN/oxlint" -D correctness -D suspicious --deny-warnings "$ROOT_DIR"/scripts/*.mjs
 "$FRONTEND_BIN/prettier" --check --config "$ROOT_DIR/.prettierrc.json" \
     "$ROOT_DIR/README.md" \
     "$ROOT_DIR/docs/**/*.md" \
     "$ROOT_DIR/.github/**/*.yml" \
     "$ROOT_DIR"/*.json \
     "$ROOT_DIR"/*.yaml \
+    "$ROOT_DIR/scripts/*.mjs" \
     "$ROOT_DIR/frontend/**/*.{css,html,js,json,ts,tsx}"
 python3 -W error -c \
     'import xml.etree.ElementTree as ET; ET.parse("frontend/public/favicon.svg")'

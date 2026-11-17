@@ -21,4 +21,5 @@ RUST_LOG=error taplo fmt Cargo.toml pyproject.toml rust-toolchain.toml taplo.tom
     "$ROOT_DIR/.github/**/*.yml" \
     "$ROOT_DIR"/*.json \
     "$ROOT_DIR"/*.yaml \
+    "$ROOT_DIR/scripts/*.mjs" \
     "$ROOT_DIR/frontend/**/*.{css,html,js,json,ts,tsx}"

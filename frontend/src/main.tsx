@@ -855,6 +855,12 @@ function App({ tab }: { tab: Tab }) {
                           const id =
                             globalThis.crypto?.randomUUID?.() ??
                             `endpoint-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+                          let number = 1;
+                          while (
+                            config.vpn.endpoints.some((item) => item.name === `Endpoint ${number}`)
+                          ) {
+                            number++;
+                          }
                           update("vpn", {
                             ...config.vpn,
                             selected_endpoint: config.vpn.selected_endpoint || id,
@@ -862,10 +868,10 @@ function App({ tab }: { tab: Tab }) {
                               ...config.vpn.endpoints,
                               {
                                 id,
-                                name: "",
+                                name: `Endpoint ${number}`,
                                 host: "",
                                 port: 1194,
-                                protocol: "udp",
+                                protocol: "tcp",
                               },
                             ],
                           });
