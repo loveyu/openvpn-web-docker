@@ -63,6 +63,7 @@ profiles:
         enabled: false
       sshd:
         enabled: false
+        allow_login: false
       health:
         enabled: false
         failure_threshold: 3

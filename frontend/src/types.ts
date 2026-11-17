@@ -35,6 +35,7 @@ export interface Config {
   socks5: ProxyConfig;
   sshd: Omit<ProxyConfig, "authentication"> & {
     authorized_keys: string;
+    allow_login: boolean;
     sudo: boolean;
   };
   health: {
@@ -91,6 +92,13 @@ export interface Status {
     listening: boolean;
     published_port: number | null;
     target_port: number;
+  }[];
+  routes: {
+    dst: string;
+    gateway?: string;
+    dev?: string;
+    prefsrc?: string;
+    metric?: number;
   }[];
   dns: {
     mode: string;

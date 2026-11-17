@@ -333,7 +333,7 @@ http.server.ThreadingHTTPServer(("0.0.0.0", 18080), Handler).serve_forever()
             endpoint = str(uuid.uuid4())
             settings["vpn"].update(
                 {
-                    "config": "client\ndev tun\nremote-cert-tls server\nresolv-retry infinite\n",
+                    "config": 'client\ndev tun\nremote-cert-tls server\nresolv-retry infinite\npull-filter ignore "dhcp-option DNS "\n',
                     "endpoints": [
                         {
                             "id": str(uuid.uuid4()),
@@ -372,8 +372,44 @@ http.server.ThreadingHTTPServer(("0.0.0.0", 18080), Handler).serve_forever()
             assert state["selected_endpoint"]["endpoint_id"] == endpoint
             assert len([item for item in state["endpoint_probes"] if item["ok"]]) == 1
             assert state["dns"]["pushed"] == ["10.77.0.1"]
+            assert any(route.get("dev") == "tun0" for route in state["routes"])
             wait(lambda: proxy(1080, "socks5h"))
             proxy(8888, "http")
+            assert not settings["sshd"]["allow_login"]
+            ssh_args = [
+                "ssh",
+                "-i",
+                str(directory / "ssh_key"),
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=5",
+                "-o",
+                "StrictHostKeyChecking=no",
+                "-o",
+                "UserKnownHostsFile=/dev/null",
+                "-p",
+                host_port(22),
+            ]
+            forwarded = run(
+                *ssh_args,
+                "-W",
+                "10.77.0.1:18080",
+                "work@127.0.0.1",
+                input="GET / HTTP/1.0\r\nHost: target.test\r\n\r\n",
+            )
+            assert "vpnweb-test-ok" in forwarded.stdout
+            for session in [
+                ["work@127.0.0.1", "printf unexpected-login"],
+                ["-T", "work@127.0.0.1"],
+                ["-s", "work@127.0.0.1", "sftp"],
+            ]:
+                denied = run(*ssh_args, *session, input="", check=False)
+                assert denied.returncode != 0 and not denied.stdout, "SSH 会话未被禁止"
+            settings["sshd"]["allow_login"] = True
+            api("/config", "PUT", document)
+            api("/services/sshd/restart", "POST")
+            print("✓ SSH 默认仅允许连接和转发，终端、命令和 SFTP 需显式允许", flush=True)
             assert (
                 ssh(
                     directory,
@@ -448,6 +484,7 @@ http.server.ThreadingHTTPServer(("0.0.0.0", 18080), Handler).serve_forever()
             assert not api("/tools/tcping", "POST", {"host": "10.77.0.1", "port": 1})["ok"]
             get = api("/tools/curl", "POST", {"url": "http://target.test:18080/", "method": "GET"})
             assert get["ok"] and get["status_code"] == 200 and get["stdout"] == "vpnweb-test-ok"
+            assert get["response_headers"]["content-type"] == ["text/plain"]
             assert "GET / HTTP" in get["stderr"] and "Content-Type" in get["stderr"]
             head = api(
                 "/tools/curl", "POST", {"url": "http://target.test:18080/", "method": "HEAD"}
@@ -465,6 +502,7 @@ http.server.ThreadingHTTPServer(("0.0.0.0", 18080), Handler).serve_forever()
             assert image_result["content_type"] == "image/png" and base64.b64decode(
                 image_result["image_base64"]
             ).startswith(bytes.fromhex("89504e470d0a1a0a"))
+            assert image_result["response_headers"]["content-type"] == ["image/png"]
             for path, payload in [
                 ("curl", {"url": "file:///etc/passwd", "method": "GET"}),
                 ("curl", {"url": "http://target.test", "method": "POST"}),

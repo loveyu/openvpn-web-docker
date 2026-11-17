@@ -99,7 +99,7 @@ pub async fn curl(vpn: &Vpn, url: &str, method: &str) -> Value {
         Ok(ip) => ip,
         Err(error) => return failure(url, start, error),
     };
-    // 元数据放在唯一标记之后，响应正文按原始字节保留，图片不会经过文本解码。
+    // 响应头和元数据放在唯一标记之后，响应正文按原始字节保留，图片不会经过文本解码。
     let marker = format!("\nVPNWEB_{}_INFO:", uuid::Uuid::new_v4());
     let mut args = [
         "--silent",
@@ -122,7 +122,7 @@ pub async fn curl(vpn: &Vpn, url: &str, method: &str) -> Value {
         "--resolve".into(),
         format!("{host}:{port}:{ip}"),
         "--write-out".into(),
-        format!("{marker}%{{json}}"),
+        format!("{marker}{{\"info\":%{{json}},\"headers\":%{{header_json}}}}"),
     ]);
     if method == "HEAD" {
         args.push("--head".into());
@@ -133,13 +133,15 @@ pub async fn curl(vpn: &Vpn, url: &str, method: &str) -> Value {
         Err(error) => return failure(url, start, error),
     };
     let (body, metadata) = split_curl_output(&output.stdout, marker.as_bytes());
-    let content_type = metadata["content_type"].as_str().unwrap_or("");
+    let info = &metadata["info"];
+    let content_type = info["content_type"].as_str().unwrap_or("");
     let image = method == "GET"
         && content_type.to_ascii_lowercase().starts_with("image/")
         && !body.is_empty();
     json!({"target":url,"ip":ip,"method":method,"ok":output.status.success(),
         "elapsed_ms":start.elapsed().as_secs_f64()*1000.0,"exit_code":output.status.code(),
-        "status_code":metadata["http_code"],"content_type":content_type,
+        "status_code":info["http_code"],"content_type":content_type,
+        "response_headers":metadata["headers"],
         "stdout":if image{String::new()}else{String::from_utf8_lossy(body).into_owned()},
         "image_base64":if image{Some(STANDARD.encode(body))}else{None},
         "stderr":trace(&output.stderr)})

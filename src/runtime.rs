@@ -378,6 +378,8 @@ fn parse(vpn: &config::Vpn) -> Result<ParsedConfig> {
     if normalized.is_empty() {
         return Err("请配置至少一个 OpenVPN remote 或 endpoint".into());
     }
+    // DNS 由界面统一管理；优先接收下发值，避免原文的 ignore/reject 过滤器使自动模式失效。
+    kept.insert(0, "pull-filter accept \"dhcp-option DNS \"".into());
     Ok((kept, normalized))
 }
 
@@ -1110,7 +1112,9 @@ async fn render_ssh(rt: &Runtime, config: &Active) -> Result<()> {
         fs::remove_file(sudoers)?;
     }
     let path = rt.run.join("sshd_config");
-    rt.write(&path,format!("Port {}\nListenAddress 0.0.0.0\nHostKey {}\nPidFile /run/sshd/vpnweb.pid\nPermitRootLogin no\nAllowUsers {}\nPasswordAuthentication {}\nPubkeyAuthentication yes\nAuthorizedKeysFile .ssh/authorized_keys\nKbdInteractiveAuthentication no\nUsePAM no\nAllowTcpForwarding yes\nGatewayPorts clientspecified\nPermitTunnel yes\nPrintMotd no\nSubsystem sftp internal-sftp\nLogLevel VERBOSE\n",SSH_PORT,hostkey.display(),ssh.username,if ssh.password.is_empty(){"no"}else{"yes"}).as_bytes())?;
+    // MaxSessions=0 禁止终端、命令和 SFTP 会话，仍允许认证后的端口转发。
+    let max_sessions = if ssh.allow_login { 10 } else { 0 };
+    rt.write(&path,format!("Port {}\nListenAddress 0.0.0.0\nHostKey {}\nPidFile /run/sshd/vpnweb.pid\nPermitRootLogin no\nAllowUsers {}\nPasswordAuthentication {}\nPubkeyAuthentication yes\nAuthorizedKeysFile .ssh/authorized_keys\nKbdInteractiveAuthentication no\nUsePAM no\nMaxSessions {max_sessions}\nAllowTcpForwarding yes\nGatewayPorts clientspecified\nPermitTunnel yes\nPrintMotd no\nSubsystem sftp internal-sftp\nLogLevel VERBOSE\n",SSH_PORT,hostkey.display(),ssh.username,if ssh.password.is_empty(){"no"}else{"yes"}).as_bytes())?;
     network::command(
         "sshd",
         &args(&["-t", "-f", &path.display().to_string()]),
@@ -1314,6 +1318,14 @@ async fn status(rt: &Runtime) -> Result<Value> {
     let (services, firewall) = tokio::try_join!(processes(), health::firewall_ready())?;
     let container_health = health::container_status(&services, firewall);
     let vpn_health = health::vpn_status(rt).await?;
+    let routes: Value = serde_json::from_str(
+        &network::command(
+            "ip",
+            &args(&["-j", "-4", "route", "show", "table", "main"]),
+            None,
+        )
+        .await?,
+    )?;
     let listing = network::command("ss", &args(&["-H", "-lntp"]), None).await?;
     let ports = [
         ("backend", WEB_PORT, "PUBLISHED_WEB_PORT"),
@@ -1339,7 +1351,7 @@ async fn status(rt: &Runtime) -> Result<Value> {
     })
     .collect::<Vec<_>>();
     Ok(
-        json!({"services":services,"vpn":vpn_state(rt).await,"kill_switch":firewall,"ports":ports,"dns":rt.read("dns.json",json!({"mode":active.settings.vpn.dns_mode,"pushed":[],"effective":[],"source":"none"}))?,"active_profile":active.id,"httpdns":rt.read("httpdns.json",json!({"state":"probing","results":[]}))?,"httpdns_presets":network::providers(),"endpoint_probes":rt.read("endpoint-probes.json",json!([]))?,"selected_endpoint":rt.read("selected-endpoint.json",Value::Null)?,"remote_endpoints":rt.endpoints()?,"health":{"container":container_health,"vpn":vpn_health}}),
+        json!({"services":services,"vpn":vpn_state(rt).await,"kill_switch":firewall,"ports":ports,"routes":routes,"dns":rt.read("dns.json",json!({"mode":active.settings.vpn.dns_mode,"pushed":[],"effective":[],"source":"none"}))?,"active_profile":active.id,"httpdns":rt.read("httpdns.json",json!({"state":"probing","results":[]}))?,"httpdns_presets":network::providers(),"endpoint_probes":rt.read("endpoint-probes.json",json!([]))?,"selected_endpoint":rt.read("selected-endpoint.json",Value::Null)?,"remote_endpoints":rt.endpoints()?,"health":{"container":container_health,"vpn":vpn_health}}),
     )
 }
 

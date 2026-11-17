@@ -13,6 +13,7 @@ interface ProbeResult {
   method?: "GET" | "HEAD";
   status_code?: number;
   content_type?: string;
+  response_headers?: Record<string, string[]> | null;
   image_base64?: string | null;
 }
 
@@ -32,6 +33,16 @@ function ProbeOutput({ result }: { result?: ProbeResult }) {
         <code>{result.target}</code>
         {result.ip && <span> · {result.ip}</span>}
       </p>
+      {result.method === "GET" && result.response_headers && (
+        <details open>
+          <summary>响应头</summary>
+          <pre className="logs probe-output">
+            {Object.entries(result.response_headers)
+              .flatMap(([name, values]) => values.map((value) => `${name}: ${value}`))
+              .join("\n") || "（未收到响应头）"}
+          </pre>
+        </details>
+      )}
       {result.image_base64 ? (
         <figure className="probe-image">
           {imageError ? (

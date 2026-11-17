@@ -8,8 +8,10 @@ import {
   Routes,
   useNavigate,
   useParams,
+  useSearchParams,
 } from "react-router-dom";
 import { request } from "./api";
+import { LogOutput } from "./LogOutput";
 import { NetworkProbes } from "./NetworkProbes";
 import { TraceProbe } from "./TraceProbe";
 import {
@@ -82,7 +84,7 @@ const descriptions: Record<Tab, string> = {
   vpn: "导入连接配置，管理凭据与证书，建立你的专属网络通道。",
   http: "为浏览器与应用提供经过 VPN 隧道的 HTTP / HTTPS 代理。",
   socks5: "按需开启 SOCKS5 TCP 代理，支持无认证或用户名密码认证。",
-  sshd: "按需启用安全终端和端口转发，支持密码与公钥登录。",
+  sshd: "通过 SSH 建立加密连接和端口转发，可选择允许终端登录。",
   logs: "查看各服务的近期输出，定位连接与配置问题。",
   health: "分别查看容器与 OpenVPN 健康状态，配置隧道探测与自动恢复。",
   tools: "选择网络工具，检查连通性、HTTP 响应、路由路径与 DNS 解析。",
@@ -320,6 +322,7 @@ function ThemeSwitcher() {
 
 function App({ tab }: { tab: Tab }) {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { tool: requestedTool = "" } = useParams();
   const selectedTool = ["ping", "tcping", "curl", "dns", "mtr", "traceroute"].includes(
     requestedTool,
@@ -332,6 +335,8 @@ function App({ tab }: { tab: Tab }) {
     (item) => item.id === documentConfig.active_profile,
   );
   const config = profile?.settings;
+  const automaticEndpoint = config?.vpn.selection_mode === "auto";
+  const automaticDns = config?.vpn.dns_mode === "pushed";
   const [newProfile, setNewProfile] = useState(false);
   const authHelp = useRef<HTMLDialogElement>(null);
   // 部署配置不是登录表单，仅在获焦时开放编辑，避免浏览器回填管理凭据。
@@ -345,7 +350,10 @@ function App({ tab }: { tab: Tab }) {
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ text: string; error?: boolean }>();
-  const [logService, setLogService] = useState<Service>("openvpn");
+  const requestedLogService = searchParams.get("service") ?? "openvpn";
+  const logService: Service = Object.hasOwn(names, requestedLogService)
+    ? (requestedLogService as Service)
+    : "openvpn";
   const [log, setLog] = useState("");
   const upload = useRef<HTMLInputElement>(null);
 
@@ -680,9 +688,15 @@ function App({ tab }: { tab: Tab }) {
                         隧道 DNS
                       </div>
                       <strong className="mono dns-stat">
-                        {status?.dns.effective[0] ?? "未获取"}
+                        {status?.dns.effective.join(", ") || "暂无可用 DNS"}
                       </strong>
-                      <p>DNS 请求通过 VPN 发送</p>
+                      <p>
+                        {status?.dns.source === "manual"
+                          ? "当前生效 · 手动指定"
+                          : status?.dns.source === "pushed"
+                            ? "当前生效 · 服务器下发"
+                            : "等待服务器下发或手动指定"}
+                      </p>
                     </div>
                   </div>
                   <Panel
@@ -703,6 +717,13 @@ function App({ tab }: { tab: Tab }) {
                       {(["openvpn", "http", "socks5", "sshd", "backend"] as Service[]).map(
                         (name, index) => {
                           const Icon = [ShieldCheck, Globe2, Network, Terminal, Settings2][index];
+                          const service = status?.services.find((item) => item.name === name);
+                          const uptime =
+                            service?.state === "RUNNING"
+                              ? service.description
+                                  .match(/\buptime (.+)$/)?.[1]
+                                  .replace(/(\d+) days?, /, "$1 天 ")
+                              : undefined;
                           const port =
                             name === "openvpn"
                               ? "tun0"
@@ -727,7 +748,10 @@ function App({ tab }: { tab: Tab }) {
                                 </span>
                               </div>
                               <code>{port}</code>
-                              <Badge state={serviceState(name)} />
+                              <div className="service-status">
+                                <Badge state={serviceState(name)} />
+                                {uptime && <span className="service-uptime">已运行 {uptime}</span>}
+                              </div>
                               <div className="service-actions">
                                 {name !== "backend" && (
                                   <button
@@ -758,7 +782,7 @@ function App({ tab }: { tab: Tab }) {
                                   </button>
                                 )}
                                 <button
-                                  className="icon-button"
+                                  className="icon-button service-restart"
                                   disabled={busy}
                                   title={`重启${names[name]}`}
                                   aria-label={`重启${names[name]}`}
@@ -814,6 +838,45 @@ function App({ tab }: { tab: Tab }) {
                       })}
                     </div>
                   </Panel>
+                  <Panel title="当前路由" description="容器当前的 IPv4 路由，随状态刷新更新。">
+                    <div className="table-scroll">
+                      <table className="results-table">
+                        <thead>
+                          <tr>
+                            <th>目标网段</th>
+                            <th>网关</th>
+                            <th>接口</th>
+                            <th>源地址</th>
+                            <th>优先级</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {status?.routes?.map((route, index) => (
+                            <tr key={index}>
+                              <td>
+                                <code>{route.dst === "default" ? "0.0.0.0/0" : route.dst}</code>
+                              </td>
+                              <td>
+                                <code>{route.gateway ?? "直连"}</code>
+                              </td>
+                              <td>
+                                <code>{route.dev ?? "—"}</code>
+                              </td>
+                              <td>
+                                <code>{route.prefsrc ?? "—"}</code>
+                              </td>
+                              <td>{route.metric ?? "—"}</td>
+                            </tr>
+                          ))}
+                          {!status?.routes?.length && (
+                            <tr>
+                              <td colSpan={5}>暂无 IPv4 路由</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Panel>
                   <div className="note">
                     <ShieldCheck size={17} />
                     <p>
@@ -846,8 +909,12 @@ function App({ tab }: { tab: Tab }) {
                     </p>
                   </div>
                   <Panel
-                    title="Endpoint 连接选择"
-                    description="默认 Auto 自动探测；支持域名与 IPv4。拖拽调整优先级，无延迟结果时按列表顺序选择。"
+                    title="VPN 节点"
+                    description={
+                      automaticEndpoint
+                        ? "自动探测候选节点并选择可用、延迟较低的节点，无需手动指定。"
+                        : "从节点列表中指定一个节点，连接时仅使用该节点。"
+                    }
                     aside={
                       <button
                         className="button small"
@@ -878,7 +945,7 @@ function App({ tab }: { tab: Tab }) {
                         }}
                       >
                         <Plus size={14} />
-                        添加 endpoint
+                        添加节点
                       </button>
                     }
                   >
@@ -905,7 +972,7 @@ function App({ tab }: { tab: Tab }) {
                             }}
                           />
                         </Field>
-                        <Field label="选择模式">
+                        <Field label="连接模式">
                           <select
                             value={config.vpn.selection_mode}
                             onChange={(event) =>
@@ -915,32 +982,38 @@ function App({ tab }: { tab: Tab }) {
                               })
                             }
                           >
-                            <option value="auto">Auto · 自动探测与选择</option>
-                            <option value="manual">手动选择</option>
+                            <option value="auto">自动选择节点</option>
+                            <option value="manual">手动指定节点</option>
                           </select>
                         </Field>
-                        <Field label="Endpoint（记住上次使用）" wide>
-                          <select
-                            value={config.vpn.selected_endpoint}
-                            disabled={config.vpn.endpoints.length === 0}
-                            onChange={(event) =>
-                              update("vpn", {
-                                ...config.vpn,
-                                selected_endpoint: event.target.value,
-                              })
-                            }
+                        {!automaticEndpoint && (
+                          <Field
+                            label="连接节点"
+                            help="保存并连接后，仅连接此节点；选择会随配置保存。"
+                            wide
                           >
-                            {config.vpn.endpoints.length === 0 && (
-                              <option value="">使用 .ovpn 原文中的 remote</option>
-                            )}
-                            {config.vpn.endpoints.map((item) => (
-                              <option key={item.id} value={item.id}>
-                                {item.name || item.host || "未命名"} · {item.host}:{item.port} /{" "}
-                                {item.protocol.toUpperCase()}
-                              </option>
-                            ))}
-                          </select>
-                        </Field>
+                            <select
+                              value={config.vpn.selected_endpoint}
+                              disabled={config.vpn.endpoints.length === 0}
+                              onChange={(event) =>
+                                update("vpn", {
+                                  ...config.vpn,
+                                  selected_endpoint: event.target.value,
+                                })
+                              }
+                            >
+                              {config.vpn.endpoints.length === 0 && (
+                                <option value="">使用 .ovpn 原文中的 remote</option>
+                              )}
+                              {config.vpn.endpoints.map((item) => (
+                                <option key={item.id} value={item.id}>
+                                  {item.name || item.host || "未命名"} · {item.host}:{item.port} /{" "}
+                                  {item.protocol.toUpperCase()}
+                                </option>
+                              ))}
+                            </select>
+                          </Field>
+                        )}
                       </div>
                       <div className="endpoint-list">
                         {config.vpn.endpoints.map((item, index) => (
@@ -1075,9 +1148,11 @@ function App({ tab }: { tab: Tab }) {
                       <div className="note">
                         <Network size={16} />
                         <p>
-                          Auto 对 IP＋端口执行 OpenVPN 握手验证（含 UDP），再按 Ping / TCPing
-                          延迟选择；无法测得延迟时按排序选首个可用项。手动选择时仅连接指定项。填写列表后，原文中的
-                          remote 将由列表接管。
+                          {config.vpn.endpoints.length === 0
+                            ? "尚未添加节点，将使用 .ovpn 配置中的 remote 地址。添加节点后将改用此列表。"
+                            : automaticEndpoint
+                              ? "连接前自动验证各节点并比较延迟。无法测得延迟时，按列表顺序选择首个可用节点；可拖拽调整顺序。"
+                              : "仅连接上方指定的节点，不自动切换到其他节点。切换节点后，点击“保存并连接”生效。"}
                         </p>
                       </div>
                       {status?.selected_endpoint && (
@@ -1221,11 +1296,15 @@ function App({ tab }: { tab: Tab }) {
                   </Panel>
                   <Panel
                     title="DNS 设置"
-                    description="连接与重连时读取 OpenVPN 下发的 DNS，支持手动覆盖与热切换"
+                    description={
+                      automaticDns
+                        ? "自动使用 VPN 服务器下发的 DNS，连接和重连时更新。"
+                        : "使用指定的 DNS 地址，覆盖 VPN 服务器下发的设置。"
+                    }
                   >
                     <div className="panel-body">
                       <div className="form-grid compact-grid">
-                        <Field label="DNS 模式">
+                        <Field label="DNS 模式" wide={automaticDns}>
                           <select
                             value={config.vpn.dns_mode}
                             onChange={(event) =>
@@ -1239,53 +1318,64 @@ function App({ tab }: { tab: Tab }) {
                             <option value="manual">手动指定</option>
                           </select>
                         </Field>
-                        <Field label="手动 DNS" help="IPv4 地址，多个地址用逗号分隔。">
-                          <input
-                            disabled={config.vpn.dns_mode !== "manual"}
-                            value={config.vpn.dns.join(", ")}
-                            onChange={(event) =>
-                              update("vpn", {
-                                ...config.vpn,
-                                dns: event.target.value.split(/[,，]/).map((value) => value.trim()),
-                              })
-                            }
-                          />
-                        </Field>
+                        {!automaticDns && (
+                          <Field label="手动 DNS" help="IPv4 地址，多个地址用逗号分隔。">
+                            <input
+                              value={config.vpn.dns.join(", ")}
+                              onChange={(event) =>
+                                update("vpn", {
+                                  ...config.vpn,
+                                  dns: event.target.value
+                                    .split(/[,，]/)
+                                    .map((value) => value.trim()),
+                                })
+                              }
+                            />
+                          </Field>
+                        )}
                       </div>
-                      <dl className="detail-list">
-                        <div>
-                          <dt>服务器下发</dt>
-                          <dd>
-                            <code>{status?.dns.pushed.join(", ") || "尚未获取"}</code>
-                          </dd>
+                      <div className="dns-status-grid">
+                        <div className="dns-status-card">
+                          <span>服务器下发</span>
+                          <strong className="mono">
+                            {status?.dns.pushed.join(", ") || "尚未收到 DNS"}
+                          </strong>
+                          <small>
+                            {connected ? "本次 VPN 连接收到的地址" : "连接 VPN 后自动获取"}
+                          </small>
                         </div>
-                        <div>
-                          <dt>当前生效</dt>
-                          <dd>
-                            <code>{status?.dns.effective.join(", ") || "暂无可用 DNS"}</code>
-                            <span>
-                              {status?.dns.source === "manual"
-                                ? "手动配置"
-                                : status?.dns.source === "pushed"
-                                  ? "VPN 下发"
-                                  : "未获取"}
-                            </span>
-                          </dd>
+                        <div className="dns-status-card">
+                          <span>当前生效</span>
+                          <strong className="mono">
+                            {status?.dns.effective.join(", ") || "暂无可用 DNS"}
+                          </strong>
+                          <small>
+                            {status?.dns.source === "manual"
+                              ? "手动配置"
+                              : status?.dns.source === "pushed"
+                                ? "VPN 下发"
+                                : "未获取"}
+                          </small>
                         </div>
-                      </dl>
+                      </div>
                       <div className="note">
                         <CircleHelp size={16} />
                         <p>
-                          自动模式未收到服务器 DNS 时不会回退到公网 DNS。仅应用 DNS
-                          无需重启容器、VPN 或代理；已有连接与缓存由应用自行更新。
+                          {automaticDns
+                            ? status?.dns.pushed.length
+                              ? "连接和重连时自动应用服务器下发的 DNS。点击下方按钮可立即应用最近收到的地址，无需重启 VPN。"
+                              : "等待 VPN 服务器下发 DNS。未收到地址时不会回退到公共 DNS，可检查 VPN 连接或切换为手动指定。"
+                            : "应用后立即使用上方填写的地址，无需重启 VPN 或代理。已有连接与 DNS 缓存由应用自行更新。"}
                         </p>
                       </div>
                     </div>
                     <div className="form-footer">
-                      <span>连接状态与解析结果可在网络工具中检查</span>
+                      <span>
+                        {automaticDns ? "使用 VPN 服务器提供的 DNS" : "使用手动配置的 DNS"}
+                      </span>
                       <button
                         className="button primary"
-                        disabled={busy}
+                        disabled={busy || (automaticDns && !status?.dns.pushed.length)}
                         onClick={() =>
                           void execute(async () => {
                             await save();
@@ -1298,7 +1388,11 @@ function App({ tab }: { tab: Tab }) {
                         }
                       >
                         <Check size={15} />
-                        仅应用 DNS
+                        {automaticDns
+                          ? status?.dns.pushed.length
+                            ? "应用服务器 DNS"
+                            : "等待服务器下发 DNS"
+                          : "应用手动 DNS"}
                       </button>
                     </div>
                   </Panel>
@@ -1477,7 +1571,7 @@ function App({ tab }: { tab: Tab }) {
               {tab === "sshd" && (
                 <Panel
                   title="SSH 服务配置"
-                  description="支持终端、SFTP、TCP 转发与 TUN 转发；容器端口固定为 22，默认关闭"
+                  description="SSH 服务默认关闭，容器端口固定为 22。启用后默认仅允许连接和转发，终端登录需单独开启。"
                 >
                   <form
                     className="panel-body"
@@ -1491,7 +1585,7 @@ function App({ tab }: { tab: Tab }) {
                       help="密码与公钥至少配置一种，也可同时启用"
                     />
                     <div className="form-grid">
-                      <Field label="登录用户名">
+                      <Field label="认证用户名">
                         <input
                           name="ssh-service-user"
                           autoComplete="off"
@@ -1507,7 +1601,7 @@ function App({ tab }: { tab: Tab }) {
                           }
                         />
                       </Field>
-                      <Field label="登录密码（可选）" help="留空关闭密码登录，改用公钥。" wide>
+                      <Field label="认证密码（可选）" help="留空关闭密码认证，改用公钥。" wide>
                         <input
                           name="ssh-service-password"
                           type="password"
@@ -1526,7 +1620,7 @@ function App({ tab }: { tab: Tab }) {
                       </Field>
                       <Field
                         label="SSH 公钥（支持多个，可选）"
-                        help="可粘贴多个公钥，每行一个，均可用于此用户登录。请勿填写私钥。"
+                        help="可粘贴多个公钥，每行一个，均可用于此用户认证。请勿填写私钥。"
                         wide
                       >
                         <textarea
@@ -1548,11 +1642,19 @@ function App({ tab }: { tab: Tab }) {
                       </Field>
                     </div>
                     <Toggle
-                      label="允许免密 sudo"
-                      help="为此 SSH 用户授予容器内完整 root 权限，包括修改网络和防火墙"
-                      checked={config.sshd.sudo}
-                      onChange={(sudo) => update("sshd", { ...config.sshd, sudo })}
+                      label="允许登录"
+                      help="默认关闭，仅允许 SSH 连接和转发。开启后允许终端、远程命令和 SFTP；保存并重启后生效。"
+                      checked={config.sshd.allow_login}
+                      onChange={(allow_login) => update("sshd", { ...config.sshd, allow_login })}
                     />
+                    {config.sshd.allow_login && (
+                      <Toggle
+                        label="允许免密 sudo"
+                        help="为此 SSH 用户授予容器内完整 root 权限，包括修改网络和防火墙"
+                        checked={config.sshd.sudo}
+                        onChange={(sudo) => update("sshd", { ...config.sshd, sudo })}
+                      />
+                    )}
                   </form>
                   {footer("sshd")}
                 </Panel>
@@ -1947,7 +2049,11 @@ function App({ tab }: { tab: Tab }) {
                       <select
                         aria-label="日志服务"
                         value={logService}
-                        onChange={(event) => setLogService(event.target.value as Service)}
+                        onChange={(event) => {
+                          const next = new URLSearchParams(searchParams);
+                          next.set("service", event.target.value);
+                          setSearchParams(next);
+                        }}
                       >
                         {Object.entries(names).map(([name, label]) => (
                           <option key={name} value={name}>
@@ -1980,7 +2086,7 @@ function App({ tab }: { tab: Tab }) {
                     </div>
                   }
                 >
-                  <pre className="logs">{log || "暂无日志。启动服务后在这里查看输出。"}</pre>
+                  <LogOutput content={log} />
                 </Panel>
               )}
             </>

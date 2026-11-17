@@ -276,6 +276,7 @@ pub struct Ssh {
     pub username: String,
     pub password: String,
     pub authorized_keys: String,
+    pub allow_login: bool,
     pub sudo: bool,
 }
 
@@ -286,6 +287,7 @@ impl Default for Ssh {
             username: "work".into(),
             password: String::new(),
             authorized_keys: String::new(),
+            allow_login: false,
             sudo: false,
         }
     }
@@ -439,6 +441,14 @@ mod tests {
         let config = Config::default();
         assert!(config.validate().is_ok());
         assert!(!config.sshd.enabled && !config.socks5.enabled);
+        assert!(!config.sshd.allow_login);
+    }
+    #[test]
+    fn existing_ssh_configs_require_explicit_login_permission() {
+        let ssh: Ssh = serde_json::from_str(r#"{"enabled":true}"#).unwrap();
+        assert!(!ssh.allow_login);
+        let ssh: Ssh = serde_json::from_str(r#"{"enabled":true,"allow_login":true}"#).unwrap();
+        assert!(ssh.allow_login);
     }
     #[test]
     fn rejects_missing_authentication() {

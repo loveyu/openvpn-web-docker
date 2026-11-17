@@ -503,7 +503,8 @@ main {
   padding: 24px;
 }
 .service-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 36px minmax(110px, 1fr) 75px 150px 130px;
   gap: 15px;
   align-items: center;
   padding: 18px 25px;
@@ -543,6 +544,18 @@ main {
   color: var(--text-muted);
   min-width: 75px;
 }
+.service-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+.service-uptime {
+  font-size: 12px;
+  color: var(--text-subtle);
+  font-variant-numeric: tabular-nums;
+}
 .badge {
   font-size: 12px;
   color: var(--text-muted);
@@ -571,11 +584,13 @@ main {
   border-color: var(--danger-border);
 }
 .service-actions {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(3, 40px);
   gap: 5px;
-  margin-left: 17px;
-  min-width: 90px;
-  justify-content: flex-end;
+}
+.service-restart {
+  grid-column: 2;
+  grid-row: 1;
 }
 .icon-button {
   width: 40px;
@@ -793,6 +808,37 @@ code,
   line-height: 1.9;
   color: var(--accent-text);
   background: var(--field-bg);
+}
+.log-highlight {
+  color: var(--text);
+}
+.log-highlight .token.date,
+.log-highlight .token.time,
+.log-highlight .token.comment,
+.log-highlight .token.trace {
+  color: var(--text-subtle);
+}
+.log-highlight .token.info {
+  color: var(--accent);
+}
+.log-highlight .token.warning {
+  color: var(--warning);
+}
+.log-highlight .token.error,
+.log-highlight .token.exception {
+  color: var(--danger);
+}
+.log-highlight .token.level {
+  font-weight: 600;
+}
+.log-highlight .token.debug,
+.log-highlight .token.property,
+.log-highlight .token.url,
+.log-highlight .token.constant {
+  color: light-dark(#215fa1, #9cc6fa);
+}
+.log-highlight .token.string {
+  color: var(--accent-text);
 }
 .empty-state {
   min-height: 400px;
@@ -1077,6 +1123,32 @@ code,
 .dns-query .field {
   flex: 1;
 }
+.dns-status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.dns-status-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  min-width: 0;
+}
+.dns-status-card > span,
+.dns-status-card > small {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.dns-status-card > strong {
+  font-size: 16px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
 
 .probe-form {
   display: flex;
@@ -1087,6 +1159,11 @@ code,
 .probe-form .field {
   flex: 1;
   min-width: 160px;
+}
+.probe-form input,
+.probe-form select,
+.probe-form .button {
+  height: 48px;
 }
 .probe-form .probe-port,
 .probe-form .probe-method {
@@ -1290,10 +1367,11 @@ code,
     flex-wrap: wrap;
   }
   .service-row {
-    flex-wrap: wrap;
+    grid-template-columns: 36px minmax(0, 1fr) 75px 150px;
   }
   .service-actions {
-    margin-left: auto;
+    grid-column: 2 / -1;
+    justify-self: end;
   }
   .port-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1526,8 +1604,10 @@ code,
     min-width: 0;
     text-align: right;
   }
-  .service-row .badge {
+  .service-status {
     grid-column: 2;
+  }
+  .service-row .badge {
     justify-self: start;
     min-width: 0;
     white-space: nowrap;

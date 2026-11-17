@@ -224,11 +224,21 @@ pub async fn httpdns(provider: Provider, ip: Ipv4Addr, name: String) -> Value {
     let mut result = json!({"provider":provider.name,"provider_id":provider.id,"region":provider.region,"url":provider.url,"protocol":provider.protocol,"ip":ip,"ok":false,"answers":[]});
     let work = async {
         let (host, port) = http_target(&provider.url)?;
+        let run = std::env::var("RUN_DIR").unwrap_or_else(|_| "/run/vpnweb".into());
+        let network: Value = serde_json::from_slice(
+            &tokio::fs::read(std::path::Path::new(&run).join("network.json")).await?,
+        )?;
+        let interface = network["interface"]
+            .as_str()
+            .ok_or("缺少容器 bridge 网卡")?;
+        // 固定 HTTPDNS 地址已有防火墙例外；绑定 bridge 网卡，避免全隧道路由把启动解析送入 VPN。
         let mut args = vec![
             "--silent".into(),
             "--show-error".into(),
             "--fail".into(),
             "--ipv4".into(),
+            "--interface".into(),
+            format!("if!{interface}"),
             "--noproxy".into(),
             "*".into(),
             "--connect-timeout".into(),
