@@ -107,6 +107,21 @@ test -f .env || cp .env.example .env
 
 手动重启进程不会编译 Rust；Rust 更新统一使用 `./scripts/dev.sh build`，确保新产物已经发布。
 
+## API 与 AI 调试
+
+后端直接生成两份纯文本 API 文档，无需部署独立的 txt 文件：
+
+| 地址 | 内容 |
+| --- | --- |
+| `/llms.txt` | 接口索引、认证约定和调试顺序 |
+| `/llms-full.txt` | 全部接口的参数与响应、从 Rust 默认模型生成的配置示例、WebSocket 协议、错误处理和调用示例 |
+
+`/llm.txt`、`/llm-full.txt` 分别以 HTTP **302** 跳转到上表对应地址。启用管理认证时，文档读取和跳转均需携带同一组 Basic Auth 凭据。文档不读取当前实例配置或密钥。
+
+页面 `<head>` 通过两个 `rel="alternate"` 链接声明文档地址，所有页面的页脚也提供入口。Vite 自动代理这四个地址，可从默认的 <http://127.0.0.1:5173/llms.txt> 和 <http://127.0.0.1:5173/llms-full.txt> 访问；后端默认使用 `18080` 端口。
+
+简版与完整版共用 [后端接口描述](../src/api_docs.rs)。修改 API 时同步更新描述；配置默认示例随 Rust 模型生成。
+
 ## 质量检查与格式化
 
 仓库提供两个统一脚本。`format.sh` 会修改源代码、配置和文档；`check.sh` 执行检查，任何

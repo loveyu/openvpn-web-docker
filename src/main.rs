@@ -1,3 +1,4 @@
+mod api_docs;
 mod config;
 mod network;
 mod runtime;
@@ -531,6 +532,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let router = Router::new()
         .nest("/api", api)
         .route("/healthz", get(healthz))
+        .route("/llms.txt", get(api_docs::index))
+        .route("/llms-full.txt", get(api_docs::full))
+        .route(
+            "/llm.txt",
+            get(|| async { (StatusCode::FOUND, [("location", "/llms.txt")]) }),
+        )
+        .route(
+            "/llm-full.txt",
+            get(|| async { (StatusCode::FOUND, [("location", "/llms-full.txt")]) }),
+        )
         .fallback_service(
             ServeDir::new(&static_dir)
                 .not_found_service(ServeFile::new(format!("{static_dir}/index.html"))),

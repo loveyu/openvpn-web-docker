@@ -638,6 +638,15 @@ main {
   font-size: 12px;
   letter-spacing: 0.4px;
 }
+.api-doc-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+.api-doc-links a:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
 .field {
   display: flex;
   flex-direction: column;

@@ -2139,6 +2139,14 @@ function App({ tab }: { tab: Tab }) {
           )}
           <footer className="page-footer">
             <span>OpenVPN Web Console</span>
+            <nav className="api-doc-links" aria-label="API 文档">
+              <a href="/llms.txt" target="_blank" rel="noopener noreferrer">
+                AI 接口索引
+              </a>
+              <a href="/llms-full.txt" target="_blank" rel="noopener noreferrer">
+                完整 API 文档
+              </a>
+            </nav>
           </footer>
         </main>
       </div>

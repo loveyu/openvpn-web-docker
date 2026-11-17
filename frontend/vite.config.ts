@@ -13,6 +13,7 @@ export default defineConfig(({ mode }) => {
         // 保留浏览器请求的 Host，让写操作通过后端的同源校验。
         "/api": { target, changeOrigin: false, ws: true },
         "/healthz": { target, changeOrigin: false },
+        "^/llms?(-full)?\\.txt(?:\\?|$)": { target, changeOrigin: false },
       },
     },
   };

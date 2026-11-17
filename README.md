@@ -46,3 +46,4 @@ Docker Run、端口映射、局域网访问和 GHCR 镜像用法见[部署与启
 | [健康检查](docs/health-checks.md) | 容器与 VPN 健康、探测参数、失败阈值、自动恢复 |
 | [存储与权限](docs/storage.md) | 持久化目录、密钥与账户权限、备份、日志命令、YAML 结构 |
 | [开发与验证](docs/development.md) | 技术栈版本、本地前端与容器后端、验证命令、GitHub CI |
+| [API 与 AI 调试](docs/development.md#api-与-ai-调试) | `/llms.txt` 接口索引、`/llms-full.txt` 完整 API 文档与调用约定 |
